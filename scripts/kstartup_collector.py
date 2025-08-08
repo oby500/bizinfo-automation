@@ -8,7 +8,7 @@ import sys
 import requests
 import json
 from datetime import datetime, timedelta
-from urllib.parse import urljoin  # 추가
+from urllib.parse import urljoin
 from supabase import create_client, Client
 import logging
 
@@ -34,8 +34,8 @@ class KStartupCollector:
             
         self.supabase: Client = create_client(url, key)
         
-        # API 설정
-        self.api_base_url = "https://www.k-startup.go.kr/web/module/bizpbanc-list.do"
+        # API 설정 - HTTP 사용 (HTTPS 아님)
+        self.api_base_url = "http://www.k-startup.go.kr/web/module/bizpbanc-list.do"
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json, text/plain, */*',
@@ -56,6 +56,7 @@ class KStartupCollector:
                 'orderBy': 'recent'  # 최신순
             }
             
+            # HTTP 사용 (HTTPS 아님)
             response = requests.post(
                 self.api_base_url,
                 headers=self.headers,
@@ -98,6 +99,7 @@ class KStartupCollector:
             from bs4 import BeautifulSoup
             
             logging.info("웹 스크래핑 시작...")
+            # 웹페이지는 HTTPS 사용
             url = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do"
             response = requests.get(url, headers=self.headers, timeout=30)
             
