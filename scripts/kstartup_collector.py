@@ -189,61 +189,84 @@ class KStartupCollector:
             return None
     
     def save_to_database(self, announcements):
-        """데이터베이스 저장"""
-        success_count = 0
+        """데이터베이스 저장 (최적화)"""
+        if not announcements:
+            logging.info("저장할 데이터가 없습니다.")
+            return 0
+        
+        # 1. 기존 ID 한 번에 조회
+        logging.info("기존 데이터 확인 중...")
+        existing_result = self.supabase.table('kstartup_complete').select('announcement_id').execute()
+        existing_ids = {item['announcement_id'] for item in existing_result.data} if existing_result.data else set()
+        logging.info(f"기존 데이터: {len(existing_ids)}개")
+        
+        # 2. 신규 데이터만 필터링
+        new_records = []
         duplicate_count = 0
-        error_count = 0
         
         for ann in announcements:
-            try:
-                # announcement_id 생성
-                announcement_id = f"KS_{ann.get('bizPbancSn', '')}"
-                
-                # 중복 체크
-                existing = self.supabase.table('kstartup_complete').select('id').eq('announcement_id', announcement_id).execute()
-                
-                if existing.data:
-                    duplicate_count += 1
-                    logging.info(f"  ⏭️ 중복: {ann.get('bizPbancNm', '')[:50]}...")
-                    continue
-                
-                # 레코드 생성
-                record = {
-                    'announcement_id': announcement_id,
-                    'biz_pbanc_nm': ann.get('bizPbancNm', ''),
-                    'pbanc_ctnt': ann.get('pbancCtnt', ''),
-                    'supt_biz_clsfc': ann.get('suptBizClsfc', ''),
-                    'aply_trgt_ctnt': ann.get('aplyTrgtCtnt', ''),
-                    'supt_regin': ann.get('suptRegin', ''),
-                    'pbanc_rcpt_bgng_dt': self.parse_date(ann.get('pbancRcptBgngDt')),
-                    'pbanc_rcpt_end_dt': self.parse_date(ann.get('pbancRcptEndDt')),
-                    'pbanc_ntrp_nm': ann.get('pbancNtrpNm', ''),
-                    'biz_gdnc_url': ann.get('bizGdncUrl', ''),
-                    'biz_aply_url': ann.get('bizAplyUrl', ''),
-                    'detl_pg_url': ann.get('detlPgUrl', ''),
-                    'attachment_urls': [],
-                    'attachment_count': 0,
-                    'created_at': datetime.now().isoformat()
-                }
-                
-                # DB 저장
-                result = self.supabase.table('kstartup_complete').insert(record).execute()
-                if result.data:
-                    success_count += 1
-                    logging.info(f"  ✅ 저장: {record['biz_pbanc_nm'][:50]}...")
-                else:
-                    error_count += 1
-                    
-            except Exception as e:
-                error_count += 1
-                logging.error(f"  ❌ 저장 오류: {e}")
+            # announcement_id 생성
+            announcement_id = f"KS_{ann.get('bizPbancSn', '')}"
+            
+            # 메모리에서 중복 체크
+            if announcement_id in existing_ids:
+                duplicate_count += 1
+                if duplicate_count <= 5:  # 처음 5개만 출력
+                    logging.info(f"  ⏭️ 중복: {ann.get('bizPbancNm', '')[:30]}...")
                 continue
+            
+            # 신규 레코드 생성
+            record = {
+                'announcement_id': announcement_id,
+                'biz_pbanc_nm': ann.get('bizPbancNm', ''),
+                'pbanc_ctnt': ann.get('pbancCtnt', ''),
+                'supt_biz_clsfc': ann.get('suptBizClsfc', ''),
+                'aply_trgt_ctnt': ann.get('aplyTrgtCtnt', ''),
+                'supt_regin': ann.get('suptRegin', ''),
+                'pbanc_rcpt_bgng_dt': self.parse_date(ann.get('pbancRcptBgngDt')),
+                'pbanc_rcpt_end_dt': self.parse_date(ann.get('pbancRcptEndDt')),
+                'pbanc_ntrp_nm': ann.get('pbancNtrpNm', ''),
+                'biz_gdnc_url': ann.get('bizGdncUrl', ''),
+                'biz_aply_url': ann.get('bizAplyUrl', ''),
+                'detl_pg_url': ann.get('detlPgUrl', ''),
+                'attachment_urls': [],
+                'attachment_count': 0,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            new_records.append(record)
+            logging.info(f"  ✅ 신규: {record['biz_pbanc_nm'][:30]}...")
+        
+        # 3. 배치 저장
+        success_count = 0
+        error_count = 0
+        
+        if new_records:
+            logging.info(f"\n배치 저장 중... ({len(new_records)}개)")
+            try:
+                # K-Startup은 보통 50개 이하라 한 번에 저장 가능
+                result = self.supabase.table('kstartup_complete').insert(new_records).execute()
+                if result.data:
+                    success_count = len(result.data)
+                    logging.info(f"  배치 저장 완료: {success_count}개")
+            except Exception as e:
+                # 실패 시 개별 저장으로 fallback
+                logging.error(f"배치 저장 실패, 개별 저장 시도: {e}")
+                for record in new_records:
+                    try:
+                        result = self.supabase.table('kstartup_complete').insert(record).execute()
+                        if result.data:
+                            success_count += 1
+                    except Exception as e2:
+                        error_count += 1
+                        logging.error(f"  개별 저장 오류: {e2}")
         
         # 결과 요약
         logging.info("\n=== 수집 결과 ===")
         logging.info(f"✅ 신규 저장: {success_count}개")
         logging.info(f"⏭️ 중복 제외: {duplicate_count}개")
-        logging.info(f"❌ 오류: {error_count}개")
+        if error_count > 0:
+            logging.info(f"❌ 오류: {error_count}개")
         logging.info(f"📊 전체 처리: {len(announcements)}개")
         
         return success_count
