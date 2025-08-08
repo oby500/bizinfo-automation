@@ -42,66 +42,68 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "======================================"
-        echo "      K-STARTUP 처리 결과 보고서"
-        echo "======================================"
-        python -c "
-import os
-from supabase import create_client
-from datetime import datetime, timedelta
-
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY')
-supabase = create_client(url, key)
-
-# 전체 통계
-total = supabase.table('kstartup_complete').select('id').execute()
-total_count = len(total.data) if total.data else 0
-
-# 오늘 추가된 데이터
-today = datetime.now().date().isoformat()
-today_new = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
-today_count = len(today_new.data) if today_new.data else 0
-
-# 오늘 업데이트된 데이터  
-today_updated = supabase.table('kstartup_complete').select('id').gte('updated_at', today).execute()
-updated_count = len(today_updated.data) if today_updated.data else 0
-
-# 첨부파일 보유 데이터
-with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
-attach_count = len(with_attach.data) if with_attach.data else 0
-
-# 요약 처리된 데이터
-with_summary = supabase.table('kstartup_complete').select('id').not_.is_('bsns_sumry', 'null').execute()
-summary_count = len(with_summary.data) if with_summary.data else 0
-
-# 최근 처리 데이터 5개
-recent = supabase.table('kstartup_complete').select(
-    'biz_pbanc_nm', 'pbanc_ntrp_nm', 'attachment_count', 'created_at'
-).order('created_at', desc=True).limit(5).execute()
-
-print('\\n📊 전체 통계')
-print('━' * 40)
-print(f'전체 데이터: {total_count}개')
-print(f'오늘 신규 추가: {today_count}개')
-print(f'오늘 업데이트: {updated_count}개')
-print(f'첨부파일 보유: {attach_count}개')
-print(f'요약 처리 완료: {summary_count}개')
-
-if today_count > 0 or updated_count > 0:
-    print('\\n✅ 오늘 처리 성공!')
-else:
-    print('\\n⚠️ 오늘 새로운 데이터가 없습니다')
-
-print('\\n📝 최근 추가 데이터 (상위 5개)')
-print('━' * 40)
-for item in recent.data[:5]:
-    print(f\"• {item['biz_pbanc_nm'][:40]}...\")
-    if item.get('pbanc_ntrp_nm'):
-        print(f\"  주관: {item['pbanc_ntrp_nm']}\")
-    print(f\"  첨부: {item.get('attachment_count', 0)}개 | 등록: {item['created_at'][:10]}\")
-    print()
-
-print('━' * 40)
-print(f'처리 완료 시간: {datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}')"
-        echo "======================================"
+        cat << 'EOF' > report.py
+        import os
+        from supabase import create_client
+        from datetime import datetime, timedelta
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_KEY')
+        supabase = create_client(url, key)
+        
+        # 전체 통계
+        total = supabase.table('kstartup_complete').select('id').execute()
+        total_count = len(total.data) if total.data else 0
+        
+        # 오늘 추가된 데이터
+        today = datetime.now().date().isoformat()
+        today_new = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
+        today_count = len(today_new.data) if today_new.data else 0
+        
+        # 오늘 업데이트된 데이터  
+        today_updated = supabase.table('kstartup_complete').select('id').gte('updated_at', today).execute()
+        updated_count = len(today_updated.data) if today_updated.data else 0
+        
+        # 첨부파일 보유 데이터
+        with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
+        attach_count = len(with_attach.data) if with_attach.data else 0
+        
+        # 요약 처리된 데이터
+        with_summary = supabase.table('kstartup_complete').select('id').not_.is_('bsns_sumry', 'null').execute()
+        summary_count = len(with_summary.data) if with_summary.data else 0
+        
+        # 최근 처리 데이터 5개
+        recent = supabase.table('kstartup_complete').select(
+            'biz_pbanc_nm', 'pbanc_ntrp_nm', 'attachment_count', 'created_at'
+        ).order('created_at', desc=True).limit(5).execute()
+        
+        print('\n' + '='*50)
+        print('      K-STARTUP 처리 결과 보고서')
+        print('='*50)
+        print('\n📊 전체 통계')
+        print('━' * 40)
+        print(f'전체 데이터: {total_count}개')
+        print(f'오늘 신규 추가: {today_count}개')
+        print(f'오늘 업데이트: {updated_count}개')
+        print(f'첨부파일 보유: {attach_count}개')
+        print(f'요약 처리 완료: {summary_count}개')
+        
+        if today_count > 0 or updated_count > 0:
+            print('\n✅ 오늘 처리 성공!')
+        else:
+            print('\n⚠️ 오늘 새로운 데이터가 없습니다')
+        
+        print('\n📝 최근 추가 데이터 (상위 5개)')
+        print('━' * 40)
+        for item in recent.data[:5]:
+            print(f"• {item['biz_pbanc_nm'][:40]}...")
+            if item.get('pbanc_ntrp_nm'):
+                print(f"  주관: {item['pbanc_ntrp_nm']}")
+            print(f"  첨부: {item.get('attachment_count', 0)}개 | 등록: {item['created_at'][:10]}")
+            print()
+        
+        print('━' * 40)
+        print(f'처리 완료 시간: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        print('='*50)
+        EOF
+        python report.py
