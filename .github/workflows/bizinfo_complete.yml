@@ -30,7 +30,7 @@ jobs:
     - name: Run Bizinfo Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "Starting Bizinfo collection..."
         python scripts/bizinfo_excel_collector.py
@@ -38,7 +38,7 @@ jobs:
     - name: Run processor
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "Processing attachments and hashtags..."
         python scripts/bizinfo_complete_processor.py
@@ -55,10 +55,12 @@ jobs:
         from datetime import datetime, timedelta
         
         url = os.environ.get('SUPABASE_URL')
-        key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+        key = os.environ.get('SUPABASE_SERVICE_KEY')
         
         if not url or not key:
             print("환경변수 오류: SUPABASE_URL 또는 SUPABASE_SERVICE_KEY가 설정되지 않았습니다.")
+            print(f"SUPABASE_URL: {'설정됨' if url else '없음'}")
+            print(f"SUPABASE_SERVICE_KEY: {'설정됨' if key else '없음'}")
             exit(1)
             
         supabase = create_client(url, key)
@@ -72,10 +74,6 @@ jobs:
             today = datetime.now().date().isoformat()
             today_new = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
-            
-            # 오늘 업데이트된 데이터  
-            today_updated = supabase.table('bizinfo_complete').select('id').gte('updated_at', today).execute()
-            updated_count = len(today_updated.data) if today_updated.data else 0
             
             # 첨부파일 보유 데이터
             with_attach = supabase.table('bizinfo_complete').select('id').neq('attachment_urls', '[]').execute()
@@ -97,11 +95,10 @@ jobs:
             print('━' * 40)
             print(f'전체 데이터: {total_count}개')
             print(f'오늘 신규 추가: {today_count}개')
-            print(f'오늘 업데이트: {updated_count}개')
             print(f'첨부파일 보유: {attach_count}개')
             print(f'요약 처리 완료: {summary_count}개')
             
-            if today_count > 0 or updated_count > 0:
+            if today_count > 0:
                 print('\n✅ 오늘 처리 성공!')
             else:
                 print('\n⚠️ 오늘 새로운 데이터가 없습니다')
@@ -110,10 +107,11 @@ jobs:
             print('━' * 40)
             if recent.data:
                 for item in recent.data[:5]:
-                    print(f"• {item['bsns_title'][:40]}...")
+                    title = item.get('bsns_title', '제목 없음')
+                    print(f"• {title[:40]}...")
                     if item.get('prfnm'):
                         print(f"  수행기관: {item['prfnm']}")
-                    print(f"  첨부: {item.get('attachment_count', 0)}개 | 등록: {item['created_at'][:10]}")
+                    print(f"  첨부: {item.get('attachment_count', 0)}개 | 등록: {item.get('created_at', '')[:10]}")
                     print()
             else:
                 print("최근 데이터가 없습니다.")
@@ -124,6 +122,8 @@ jobs:
             
         except Exception as e:
             print(f"보고서 생성 중 오류: {e}")
+            import traceback
+            traceback.print_exc()
             exit(1)
         EOF
         python report.py
