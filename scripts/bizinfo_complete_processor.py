@@ -312,13 +312,12 @@ class BizInfoCompleteProcessor:
         return '\n'.join(summary_parts)
     
     def update_database(self, record_id, attachments, hashtags, summary):
-        """DB 업데이트"""
+        """DB 업데이트 (attachment_count 제거)"""
         try:
             update_data = {
                 'attachment_urls': attachments if attachments else [],
                 'hash_tags': hashtags,
                 'bsns_sumry': summary,
-                'attachment_count': len(attachments),
                 'attachment_processing_status': 'completed',
                 'updated_at': datetime.now().isoformat()
             }
