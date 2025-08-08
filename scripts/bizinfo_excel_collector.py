@@ -79,7 +79,7 @@ def main():
         for idx, row in df.iterrows():
             try:
                 # URL에서 pblanc_id 추출
-                dtl_url = str(row.get('링크', ''))
+                dtl_url = str(row.get('공고상세URL', ''))
                 pblanc_id = None
                 
                 if dtl_url and 'pblancId=' in dtl_url:
@@ -90,20 +90,24 @@ def main():
                 if not pblanc_id:
                     pblanc_id = f"PBLN_{datetime.now().strftime('%Y%m%d')}_{idx:04d}"
                 
-                # 레코드 생성
+                # 신청기간 처리
+                start_date = str(row.get('신청시작일자', ''))
+                end_date = str(row.get('신청종료일자', ''))
+                reqst_period = f"{start_date} ~ {end_date}" if start_date and end_date else ""
+                
+                # 레코드 생성 (실제 테이블 컬럼명에 맞게 수정)
                 record = {
                     'pblanc_id': pblanc_id,
                     'pblanc_nm': str(row.get('공고명', '')),
-                    'jrsd_instt_nm': str(row.get('소관부처명', '') or row.get('관할기관', '')),
-                    'exc_instt_nm': str(row.get('수행기관', '')),
-                    'reqst_begin_end_de': str(row.get('신청기간', '')),
-                    'trget_nm': str(row.get('지원대상', '')),
-                    'pldir_sport_realm_lclas_code_nm': str(row.get('지원분야', '')),
+                    'spnsr_organ_nm': str(row.get('소관부처', '')),  # 소관부처
+                    'exctv_organ_nm': str(row.get('사업수행기관', '')),  # 수행기관
+                    'reqst_begin_ymd': start_date,
+                    'reqst_end_ymd': end_date,
+                    'sprt_realm_nm': str(row.get('지원분야', '')),
                     'dtl_url': dtl_url,
-                    'inqire_co': int(row.get('조회', 0)) if pd.notna(row.get('조회')) else 0,
+                    'regist_dt': str(row.get('등록일자', '')),
                     'src_system_nm': 'github_actions',
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat()
+                    'created_at': datetime.now().isoformat()
                 }
                 
                 # 중복 체크 후 저장
