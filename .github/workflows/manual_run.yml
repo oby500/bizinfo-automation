@@ -1,15 +1,20 @@
-name: Manual Bizinfo Process
+name: 🔧 기업마당 수동 실행
 
 on:
   workflow_dispatch:
     inputs:
       debug_mode:
-        description: 'Run in debug mode'
+        description: '디버그 모드 실행'
         required: false
         default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
-  process:
+  manual-bizinfo:
+    name: 기업마당 수동 처리
     runs-on: ubuntu-latest
     
     steps:
@@ -20,23 +25,51 @@ jobs:
       with:
         python-version: '3.9'
     
+    - name: Install Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
     - name: Install dependencies
       run: |
         pip install selenium webdriver-manager pandas openpyxl
         pip install requests beautifulsoup4 supabase
     
-    - name: Run collector
+    - name: Run Bizinfo Collector
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Starting bizinfo collection..."
+        echo "=== 기업마당 데이터 수집 시작 ==="
+        echo "실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Run processor
+    - name: Run Bizinfo Processor
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Processing attachments and hashtags..."
+        echo "=== 첨부파일 처리 및 해시태그 생성 ==="
         python scripts/bizinfo_complete_processor.py
+    
+    - name: Show Results
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== 처리 결과 확인 ==="
+        python -c "
+from supabase import create_client
+import os
+from datetime import datetime
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_KEY')
+supabase = create_client(url, key)
+
+today = datetime.now().date().isoformat()
+today_data = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
+
+print(f'📊 오늘 처리 결과: {len(today_data.data)}개')
+"
