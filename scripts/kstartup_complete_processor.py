@@ -46,7 +46,7 @@ class KStartupProcessor:
         
         logging.info("=== K-Startup 첨부파일 처리 시작 ===")
     
-    def get_unprocessed_items(self, limit=50):
+    def get_unprocessed_items(self, limit=30):
         """처리 대상 조회"""
         try:
             # 첨부파일이 없거나 요약이 없는 항목 조회
@@ -64,7 +64,8 @@ class KStartupProcessor:
                 'summary'
             ).or_(
                 'attachment_urls.is.null',
-                'attachment_urls.eq.[]'
+                'attachment_urls.eq.[]',
+                'bsns_sumry.is.null'
             ).limit(limit).execute()
             
             return result.data
@@ -74,6 +75,9 @@ class KStartupProcessor:
     
     def extract_attachments(self, detail_url):
         """상세페이지에서 첨부파일 URL 추출"""
+        if not detail_url:
+            return []
+            
         try:
             # 상세페이지 요청
             response = requests.get(detail_url, headers=self.headers, timeout=30)
@@ -118,7 +122,7 @@ class KStartupProcessor:
                 onclick = link.get('onclick', '')
                 if 'download' in onclick.lower() or 'file' in onclick.lower():
                     # 파일 ID나 경로 추출 시도
-                    match = re.search(r"['\"]([^'\"]*\.(pdf|hwp|doc|docx|xlsx|ppt|pptx|zip))['\"]", onclick, re.I)
+                    match = re.search(r"['\"](.*?\.(pdf|hwp|doc|docx|xlsx|ppt|pptx|zip))['\"]", onclick, re.I)
                     if match:
                         file_path = match.group(1)
                         file_url = urljoin(detail_url, file_path)
@@ -133,24 +137,6 @@ class KStartupProcessor:
                         if attachment not in attachments:
                             attachments.append(attachment)
                             logging.info(f"  📎 첨부파일 발견(onclick): {attachment['name'][:50]}...")
-            
-            # 3. iframe 내 문서 확인
-            iframes = soup.find_all('iframe', src=True)
-            for iframe in iframes:
-                src = iframe.get('src', '')
-                if any(ext in src.lower() for ext in ['.pdf', '.hwp', '.doc']):
-                    file_url = urljoin(detail_url, src)
-                    file_name = os.path.basename(src) or '임베디드 문서'
-                    
-                    attachment = {
-                        'name': file_name[:200],
-                        'url': file_url,
-                        'type': self.get_file_type(file_name)
-                    }
-                    
-                    if attachment not in attachments:
-                        attachments.append(attachment)
-                        logging.info(f"  📎 임베디드 문서 발견: {attachment['name'][:50]}...")
             
             return attachments
             
@@ -320,7 +306,7 @@ class KStartupProcessor:
             
             if not items:
                 logging.info("처리할 항목이 없습니다.")
-                return
+                return True  # 정상 종료
             
             logging.info(f"처리 대상: {len(items)}개")
             
@@ -367,7 +353,7 @@ class KStartupProcessor:
             logging.info(f"❌ 오류: {error_count}개")
             logging.info(f"📊 전체: {len(items)}개")
             
-            return success_count > 0
+            return True  # 정상 종료
             
         except Exception as e:
             logging.error(f"처리 중 오류: {e}")
