@@ -1,4 +1,4 @@
-name: 📊 K-Startup 자동 수집
+name: K-Startup Auto Collection
 
 on:
   workflow_dispatch:
