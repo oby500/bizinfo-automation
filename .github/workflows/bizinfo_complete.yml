@@ -1,4 +1,4 @@
-name: 📊 기업마당 자동 수집
+name: Bizinfo Auto Collection
 
 on:
   workflow_dispatch:
