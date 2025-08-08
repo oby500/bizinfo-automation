@@ -1,4 +1,4 @@
-name: 🔧 기업마당 수동 실행
+name: Bizinfo Manual Run
 
 on:
   workflow_dispatch:
