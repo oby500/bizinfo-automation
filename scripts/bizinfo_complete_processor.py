@@ -117,30 +117,50 @@ class BizInfoCompleteProcessor:
             raise
     
     def get_unprocessed_announcements(self, limit=None):
-        """처리 안 된 공고 조회"""
+        """처리 안 된 공고 조회 (수정)"""
         try:
-            # attachment_urls가 비어있거나 bsns_sumry가 없는 데이터
+            # attachment_urls가 비어있는 데이터 조회
             query = self.supabase.table('bizinfo_complete').select(
-                'id', 'pblanc_id', 'pblanc_nm', 'dtl_url', 'jrsd_instt_nm', 
-                'exc_instt_nm', 'trget_nm', 'reqst_begin_end_de', 'pblanc_cn',
-                'pldir_sport_realm_lclas_code_nm', 'reqst_mth_papers_cn'
+                'id', 'pblanc_id', 'pblanc_nm', 'dtl_url', 
+                'spnsr_organ_nm', 'exctv_organ_nm', 'sprt_realm_nm',
+                'reqst_begin_ymd', 'reqst_end_ymd'
             ).or_(
-                'attachment_urls.is.null',
-                'bsns_sumry.is.null',
-                'hash_tags.is.null'
-            ).order('id', desc=True)
+                'attachment_urls.is.null,attachment_urls.eq.[]'
+            ).order('created_at', desc=True)
             
             if limit:
                 query = query.limit(limit)
             else:
-                query = query.limit(500)  # 한 번에 최대 500개
+                query = query.limit(100)  # 한 번에 최대 100개
             
             result = query.execute()
             return result.data
             
         except Exception as e:
             logging.error(f"데이터 조회 오류: {e}")
-            return []
+            # or_ 오류 시 다른 방법 시도
+            try:
+                query = self.supabase.table('bizinfo_complete').select(
+                    'id', 'pblanc_id', 'pblanc_nm', 'dtl_url',
+                    'spnsr_organ_nm', 'exctv_organ_nm', 'sprt_realm_nm',
+                    'reqst_begin_ymd', 'reqst_end_ymd', 'attachment_urls'
+                ).order('created_at', desc=True).limit(500)
+                
+                result = query.execute()
+                # attachment_urls가 없거나 빈 배열인 것만 필터
+                unprocessed = []
+                for item in result.data:
+                    if not item.get('attachment_urls') or item.get('attachment_urls') == []:
+                        # attachment_urls 필드 제거 (필요없음)
+                        item.pop('attachment_urls', None)
+                        unprocessed.append(item)
+                        if limit and len(unprocessed) >= limit:
+                            break
+                
+                return unprocessed[:100]  # 최대 100개
+            except Exception as e2:
+                logging.error(f"대체 조회도 실패: {e2}")
+                return []
     
     def extract_attachments(self, pblanc_id, detail_url):
         """상세 페이지에서 첨부파일 추출"""
@@ -218,30 +238,23 @@ class BizInfoCompleteProcessor:
         tags = []
         
         # 지원분야에서 추출
-        if item.get('pldir_sport_realm_lclas_code_nm'):
-            field = item['pldir_sport_realm_lclas_code_nm']
+        if item.get('sprt_realm_nm'):
+            field = item['sprt_realm_nm']
             field_tags = [t.strip() for t in field.split(',') if t.strip()]
             tags.extend(field_tags[:3])  # 최대 3개
         
         # 주관기관 (짧은 것만)
-        if item.get('jrsd_instt_nm'):
-            org = item['jrsd_instt_nm'].replace('(주)', '').strip()
+        if item.get('spnsr_organ_nm'):
+            org = item['spnsr_organ_nm'].replace('(주)', '').strip()
             if len(org) <= 10:
                 tags.append(org)
-        
-        # 타겟에서 키워드 추출
-        if item.get('trget_nm'):
-            target = item['trget_nm']
-            keywords = ['스타트업', '중소기업', '소상공인', '창업', '벤처', '1인기업', '청년', '여성']
-            for keyword in keywords:
-                if keyword in target:
-                    tags.append(keyword)
         
         # 공고명에서 주요 키워드 추출
         if item.get('pblanc_nm'):
             title = item['pblanc_nm']
             title_keywords = ['R&D', 'AI', '인공지능', '빅데이터', '바이오', '환경', '그린', 
-                            '디지털', '혁신', '글로벌', '수출', '기술개발', '사업화', '투자']
+                            '디지털', '혁신', '글로벌', '수출', '기술개발', '사업화', '투자',
+                            '스타트업', '중소기업', '소상공인', '창업']
             for keyword in title_keywords:
                 if keyword.lower() in title.lower():
                     tags.append(keyword)
@@ -261,33 +274,29 @@ class BizInfoCompleteProcessor:
             summary_parts.append(f"📋 {item['pblanc_nm']}")
         
         # 주관/수행기관
-        if item.get('jrsd_instt_nm'):
-            summary_parts.append(f"🏢 주관: {item['jrsd_instt_nm']}")
-        
-        # 지원대상
-        if item.get('trget_nm'):
-            target = item['trget_nm'][:100] + "..." if len(item.get('trget_nm', '')) > 100 else item['trget_nm']
-            summary_parts.append(f"🎯 대상: {target}")
+        if item.get('spnsr_organ_nm'):
+            summary_parts.append(f"🏢 주관: {item['spnsr_organ_nm']}")
+        elif item.get('exctv_organ_nm'):
+            summary_parts.append(f"🏢 수행: {item['exctv_organ_nm']}")
         
         # 신청기간 및 D-Day
-        if item.get('reqst_begin_end_de'):
-            period = item['reqst_begin_end_de']
-            summary_parts.append(f"📅 기간: {period}")
+        if item.get('reqst_begin_ymd') and item.get('reqst_end_ymd'):
+            start_date = item['reqst_begin_ymd']
+            end_date = item['reqst_end_ymd']
+            summary_parts.append(f"📅 기간: {start_date} ~ {end_date}")
             
             # D-Day 계산
             try:
-                if '~' in period:
-                    end_date_str = period.split('~')[-1].strip()
-                    if len(end_date_str) == 8 and end_date_str.isdigit():
-                        end_date = datetime.strptime(end_date_str, '%Y%m%d')
-                        days_left = (end_date - datetime.now()).days
-                        
-                        if 0 <= days_left <= 3:
-                            summary_parts.append(f"🚨 마감임박 D-{days_left}")
-                        elif 4 <= days_left <= 7:
-                            summary_parts.append(f"⏰ D-{days_left}")
-                        elif days_left > 0:
-                            summary_parts.append(f"📆 D-{days_left}")
+                if end_date:
+                    end_dt = datetime.strptime(end_date, '%Y-%m-%d') if '-' in end_date else datetime.strptime(end_date, '%Y%m%d')
+                    days_left = (end_dt - datetime.now()).days
+                    
+                    if 0 <= days_left <= 3:
+                        summary_parts.append(f"🚨 마감임박 D-{days_left}")
+                    elif 4 <= days_left <= 7:
+                        summary_parts.append(f"⏰ D-{days_left}")
+                    elif days_left > 0:
+                        summary_parts.append(f"📆 D-{days_left}")
             except:
                 pass
         
@@ -310,7 +319,7 @@ class BizInfoCompleteProcessor:
                 'hash_tags': hashtags,
                 'bsns_sumry': summary,
                 'attachment_count': len(attachments),
-                'processed_at': datetime.now().isoformat(),
+                'attachment_processing_status': 'completed',
                 'updated_at': datetime.now().isoformat()
             }
             
