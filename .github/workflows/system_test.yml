@@ -1,0 +1,119 @@
+name: System Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: '테스트 유형'
+        required: true
+        default: 'quick'
+        type: choice
+        options:
+          - quick      # 빠른 테스트 (환경변수, API 연결)
+          - full       # 전체 테스트 (실제 수집 시도)
+
+jobs:
+  quick-test:
+    if: ${{ github.event.inputs.test_type == 'quick' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Run System Test
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== 자동화 시스템 빠른 테스트 ==="
+        python scripts/test_automation.py
+    
+    - name: Check Workflow Schedules
+      run: |
+        echo -e "\n=== 워크플로우 스케줄 확인 ==="
+        echo "📅 기업마당: 평일 오후 5시 (KST) = UTC 8시"
+        echo "📅 K-Startup: 평일 오전 7시 (KST) = UTC 22시"
+        echo ""
+        echo "현재 시간 (UTC): $(date -u)"
+        echo "현재 시간 (KST): $(TZ=Asia/Seoul date)"
+
+  full-test:
+    if: ${{ github.event.inputs.test_type == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install Chrome (for Bizinfo)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
+    - name: Install dependencies
+      run: |
+        pip install selenium webdriver-manager pandas openpyxl
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Test K-Startup Collection (5 items only)
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== K-Startup 수집 테스트 (5개만) ==="
+        python -c "
+import os
+import sys
+sys.path.insert(0, 'scripts')
+from kstartup_collector import KStartupCollector
+
+# 5개만 수집하도록 수정
+collector = KStartupCollector()
+collector.max_items = 5  # 테스트용 제한
+try:
+    collector.run()
+    print('✅ K-Startup 테스트 성공')
+except Exception as e:
+    print(f'❌ K-Startup 테스트 실패: {e}')
+"
+    
+    - name: Show Results
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        python -c "
+from supabase import create_client
+import os
+from datetime import datetime
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_SERVICE_KEY')
+supabase = create_client(url, key)
+
+# 오늘 데이터 확인
+today = datetime.now().date().isoformat()
+
+# K-Startup
+k_today = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
+print(f'📊 K-Startup 오늘 신규: {len(k_today.data)}개')
+
+# 기업마당
+b_today = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
+print(f'📊 기업마당 오늘 신규: {len(b_today.data)}개')
+"
