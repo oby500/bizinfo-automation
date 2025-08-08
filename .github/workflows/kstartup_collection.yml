@@ -1,1 +1,15 @@
-# This file has been deleted - duplicate of kstartup_complete.yml
+# Deprecated - Do not use
+# This workflow has been replaced by kstartup_complete.yml
+name: _DEPRECATED_kstartup_collection
+on:
+  workflow_dispatch:
+    inputs:
+      never_run:
+        description: 'This workflow is deprecated'
+        required: false
+        default: 'deprecated'
+jobs:
+  deprecated:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "This workflow is deprecated. Use K-Startup 자동 수집 instead."
