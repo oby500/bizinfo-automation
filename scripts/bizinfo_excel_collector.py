@@ -72,10 +72,21 @@ def main():
         # 컬럼명 확인
         print(f"컬럼: {df.columns.tolist()}")
         
-        # 5. 기존 pblanc_id 목록 한 번에 조회 (중요!)
+        # 5. 기존 pblanc_id 목록 전체 조회 (limit 없이!)
         print("기존 데이터 확인 중...")
-        existing_result = supabase.table('bizinfo_complete').select('pblanc_id').execute()
-        existing_ids = {item['pblanc_id'] for item in existing_result.data} if existing_result.data else set()
+        existing_ids = set()
+        offset = 0
+        limit = 1000
+        
+        while True:
+            result = supabase.table('bizinfo_complete').select('pblanc_id').range(offset, offset + limit - 1).execute()
+            if not result.data:
+                break
+            existing_ids.update(item['pblanc_id'] for item in result.data)
+            offset += limit
+            if len(result.data) < limit:
+                break
+        
         print(f"기존 데이터: {len(existing_ids)}개")
         
         # 6. 배치 처리용 리스트
@@ -103,9 +114,15 @@ def main():
                         print(f"  [{idx+1}/{len(df)}] ⏭️ 중복: {row.get('공고명', '')[:30]}...")
                     continue
                 
-                # 신청기간 처리
+                # 신청기간 처리 - nan 체크
                 start_date = str(row.get('신청시작일자', ''))
                 end_date = str(row.get('신청종료일자', ''))
+                
+                # nan 문자열 체크
+                if start_date == 'nan' or pd.isna(row.get('신청시작일자')):
+                    start_date = None
+                if end_date == 'nan' or pd.isna(row.get('신청종료일자')):
+                    end_date = None
                 
                 # 신규 레코드 생성
                 record = {
@@ -129,22 +146,19 @@ def main():
                 print(f"  [{idx+1}/{len(df)}] ❌ 오류: {e}")
                 continue
         
-        # 7. 배치 삽입 (한 번에!)
+        # 7. 배치 삽입 (개별 삽입으로 변경 - 중복 오류 방지)
         success_count = 0
         if new_records:
-            print(f"\n배치 저장 중... ({len(new_records)}개)")
+            print(f"\n개별 저장 중... ({len(new_records)}개)")
             
-            # 100개씩 나눠서 저장 (Supabase 제한)
-            batch_size = 100
-            for i in range(0, len(new_records), batch_size):
-                batch = new_records[i:i+batch_size]
+            for record in new_records:
                 try:
-                    result = supabase.table('bizinfo_complete').insert(batch).execute()
+                    result = supabase.table('bizinfo_complete').insert(record).execute()
                     if result.data:
-                        success_count += len(result.data)
-                        print(f"  배치 {i//batch_size + 1} 저장 완료: {len(result.data)}개")
+                        success_count += 1
                 except Exception as e:
-                    print(f"  배치 저장 오류: {e}")
+                    if 'duplicate key' not in str(e):
+                        print(f"  저장 오류: {e}")
         
         print(f"\n=== 수집 완료 ===")
         print(f"✅ 신규 저장: {success_count}개")
