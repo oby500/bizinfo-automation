@@ -1,20 +1,17 @@
-name: Bizinfo Complete Processing
+name: Bizinfo Complete
 
 on:
-  workflow_dispatch:  # 수동 실행
+  workflow_dispatch:
   schedule:
-    - cron: '0 8 * * 1-5'  # 평일 오후 5시 (KST)
+    - cron: '0 8 * * 1-5'
 
 jobs:
-  collect-and-process:
+  collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
     
-    - name: Set up Python
+    - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
@@ -24,54 +21,18 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
     
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
-        pip install --upgrade pip
-        pip install selenium webdriver-manager
-        pip install pandas openpyxl
-        pip install requests beautifulsoup4
-        pip install supabase
+        pip install selenium webdriver-manager pandas openpyxl
+        pip install requests beautifulsoup4 supabase
     
-    - name: Step 1 - Collect Bizinfo Data
+    - name: Run Bizinfo Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "=== Step 1: 기업마당 데이터 수집 ==="
+        echo "Starting Bizinfo collection..."
         python scripts/bizinfo_excel_collector.py
-    
-    - name: Wait before processing
-      run: sleep 10
-    
-    - name: Step 2 - Process Attachments and Hashtags
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      run: |
-        echo "=== Step 2: 첨부파일 크롤링 및 해시태그 생성 ==="
+        echo "Processing attachments..."
         python scripts/bizinfo_complete_processor.py
-    
-    - name: Generate Summary Report
-      if: always()
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      run: |
-        echo "=== 처리 결과 요약 ==="
-        python -c "
-import os
-from supabase import create_client
-from datetime import datetime
-
-try:
-    url = os.environ.get('SUPABASE_URL')
-    key = os.environ.get('SUPABASE_KEY')
-    supabase = create_client(url, key)
-    
-    total_result = supabase.table('bizinfo_complete').select('id').execute()
-    total_count = len(total_result.data) if total_result.data else 0
-    
-    print(f'전체 데이터: {total_count}개')
-    print(f'처리 시간: {datetime.now()}')
-except Exception as e:
-    print(f'통계 생성 실패: {e}')"
+        echo "Complete!"
