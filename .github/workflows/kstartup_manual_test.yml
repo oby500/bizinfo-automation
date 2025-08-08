@@ -1,0 +1,88 @@
+name: K-Startup Manual Test
+
+on:
+  workflow_dispatch:  # 수동 실행 전용
+    inputs:
+      action:
+        description: '실행할 작업 선택'
+        required: true
+        default: 'attachment_only'
+        type: choice
+        options:
+          - attachment_only  # 첨부파일 처리만
+          - collect_only     # 수집만
+          - full_process     # 수집 + 처리 전체
+
+jobs:
+  test-kstartup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Collect K-Startup Data
+      if: ${{ github.event.inputs.action == 'collect_only' || github.event.inputs.action == 'full_process' }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== K-Startup 데이터 수집 ==="
+        python scripts/kstartup_collector.py
+    
+    - name: Process Attachments
+      if: ${{ github.event.inputs.action == 'attachment_only' || github.event.inputs.action == 'full_process' }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== K-Startup 첨부파일 처리 ==="
+        python scripts/kstartup_complete_processor.py
+    
+    - name: Show Results
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== 처리 결과 확인 ==="
+        python -c "
+import os
+from supabase import create_client
+from datetime import datetime, timedelta
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_KEY')
+supabase = create_client(url, key)
+
+# 최근 처리된 데이터 5개
+recent = supabase.table('kstartup_complete').select(
+    'biz_pbanc_nm', 'attachment_count', 'created_at', 'updated_at'
+).order('updated_at', desc=True).limit(5).execute()
+
+print('최근 처리된 K-Startup 데이터:')
+print('=' * 50)
+for item in recent.data:
+    print(f\"제목: {item['biz_pbanc_nm'][:40]}...\")
+    print(f\"첨부파일: {item.get('attachment_count', 0)}개\")
+    print(f\"업데이트: {item['updated_at']}\")
+    print('-' * 50)
+
+# 통계
+total = supabase.table('kstartup_complete').select('id').execute()
+with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
+
+print(f'\n📊 전체 통계:')
+print(f'전체: {len(total.data)}개')
+print(f'첨부파일 보유: {len(with_attach.data)}개')"
