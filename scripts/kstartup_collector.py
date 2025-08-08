@@ -215,7 +215,7 @@ class KStartupCollector:
                     logging.info(f"  ⏭️ 중복: {ann.get('bizPbancNm', '')[:30]}...")
                 continue
             
-            # 신규 레코드 생성
+            # 신규 레코드 생성 - kstartup_complete 테이블 구조에 맞게
             record = {
                 'announcement_id': announcement_id,
                 'biz_pbanc_nm': ann.get('bizPbancNm', ''),
@@ -230,8 +230,9 @@ class KStartupCollector:
                 'biz_aply_url': ann.get('bizAplyUrl', ''),
                 'detl_pg_url': ann.get('detlPgUrl', ''),
                 'attachment_urls': [],
-                'attachment_count': 0,
+                'attachment_count': 0,  # kstartup_complete에는 이 컬럼이 있음
                 'created_at': datetime.now().isoformat()
+                # updated_at은 없음 - kstartup_complete 테이블에 없는 컬럼
             }
             
             new_records.append(record)
