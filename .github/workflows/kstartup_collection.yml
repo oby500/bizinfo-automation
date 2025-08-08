@@ -1,10 +1,10 @@
 name: K-Startup Collection
 
 on:
+  workflow_dispatch:  # 수동 실행 가능
   schedule:
     # 평일 오전 7시 실행 (KST) = UTC 22:00 (전날)
     - cron: '0 22 * * 0-4'  # 일-목 UTC 22:00 = 월-금 KST 07:00
-  workflow_dispatch:  # 수동 실행도 가능
 
 jobs:
   collect-kstartup:
