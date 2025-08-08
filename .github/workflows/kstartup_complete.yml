@@ -1,0 +1,32 @@
+name: K-Startup Complete
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * 0-4'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Run K-Startup Collection
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "Starting K-Startup collection..."
+        python scripts/kstartup_collector.py
+        echo "Processing attachments..."
+        python scripts/kstartup_complete_processor.py
+        echo "Complete!"
