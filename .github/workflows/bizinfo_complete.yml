@@ -1,12 +1,13 @@
-name: Bizinfo Complete
+name: 📊 기업마당 자동 수집
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 8 * * 1-5'
+    - cron: '0 8 * * 1-5'  # 평일 오후 5시 (KST)
 
 jobs:
   collect:
+    name: 기업마당 자동 처리
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
