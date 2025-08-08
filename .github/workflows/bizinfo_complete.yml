@@ -1,15 +1,14 @@
 name: Bizinfo Complete Processing
 
 on:
+  workflow_dispatch:  # 수동 실행
   schedule:
-    # 평일 오후 5시 실행 (KST) = UTC 08:00
-    - cron: '0 8 * * 1-5'  # 월-금 실행
-  workflow_dispatch:  # 수동 실행도 가능
+    - cron: '0 8 * * 1-5'  # 평일 오후 5시 (KST)
 
 jobs:
   collect-and-process:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 최대 2시간
+    timeout-minutes: 120
     
     steps:
     - name: Checkout repository
@@ -33,19 +32,16 @@ jobs:
         pip install requests beautifulsoup4
         pip install supabase
     
-    - name: Step 1 - Collect Bizinfo Data (Excel Download)
+    - name: Step 1 - Collect Bizinfo Data
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "=== Step 1: 기업마당 데이터 수집 ==="
         python scripts/bizinfo_excel_collector.py
-      continue-on-error: false  # 실패시 중단
     
     - name: Wait before processing
-      run: |
-        echo "데이터 수집 완료. 10초 대기..."
-        sleep 10
+      run: sleep 10
     
     - name: Step 2 - Process Attachments and Hashtags
       env:
@@ -65,44 +61,17 @@ jobs:
         python -c "
 import os
 from supabase import create_client
-from datetime import datetime, timedelta
+from datetime import datetime
 
 try:
     url = os.environ.get('SUPABASE_URL')
     key = os.environ.get('SUPABASE_KEY')
     supabase = create_client(url, key)
     
-    # 오늘 처리된 데이터 조회
-    today = datetime.now().date()
-    
-    # 전체 데이터 수
     total_result = supabase.table('bizinfo_complete').select('id').execute()
     total_count = len(total_result.data) if total_result.data else 0
     
-    # 오늘 추가된 데이터
-    today_str = today.isoformat()
-    today_result = supabase.table('bizinfo_complete').select('id').gte('created_at', today_str).execute()
-    today_count = len(today_result.data) if today_result.data else 0
-    
-    # 첨부파일 있는 데이터
-    attachment_result = supabase.table('bizinfo_complete').select('id').gt('attachment_count', 0).execute()
-    attachment_count = len(attachment_result.data) if attachment_result.data else 0
-    
-    print(f'📊 기업마당 처리 현황')
-    print(f'━━━━━━━━━━━━━━━━━━━━━━')
     print(f'전체 데이터: {total_count}개')
-    print(f'오늘 추가: {today_count}개')
-    print(f'첨부파일 보유: {attachment_count}개')
-    print(f'처리 시간: {datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}')'
+    print(f'처리 시간: {datetime.now()}')
 except Exception as e:
     print(f'통계 생성 실패: {e}')"
-    
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v3
-      with:
-        name: bizinfo-logs-${{ github.run_number }}
-        path: |
-          *.log
-          downloads/*.xlsx
-        retention-days: 7
