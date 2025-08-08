@@ -1,4 +1,4 @@
-name: 🔧 K-Startup 수동 실행
+name: K-Startup Manual Run
 
 on:
   workflow_dispatch:
