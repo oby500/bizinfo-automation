@@ -72,8 +72,14 @@ def main():
         # 컬럼명 확인
         print(f"컬럼: {df.columns.tolist()}")
         
-        # 5. DB에 저장
-        success_count = 0
+        # 5. 기존 pblanc_id 목록 한 번에 조회 (중요!)
+        print("기존 데이터 확인 중...")
+        existing_result = supabase.table('bizinfo_complete').select('pblanc_id').execute()
+        existing_ids = {item['pblanc_id'] for item in existing_result.data} if existing_result.data else set()
+        print(f"기존 데이터: {len(existing_ids)}개")
+        
+        # 6. 배치 처리용 리스트
+        new_records = []
         duplicate_count = 0
         
         for idx, row in df.iterrows():
@@ -90,17 +96,23 @@ def main():
                 if not pblanc_id:
                     pblanc_id = f"PBLN_{datetime.now().strftime('%Y%m%d')}_{idx:04d}"
                 
+                # 중복 체크 (메모리에서!)
+                if pblanc_id in existing_ids:
+                    duplicate_count += 1
+                    if duplicate_count <= 10:  # 처음 10개만 출력
+                        print(f"  [{idx+1}/{len(df)}] ⏭️ 중복: {row.get('공고명', '')[:30]}...")
+                    continue
+                
                 # 신청기간 처리
                 start_date = str(row.get('신청시작일자', ''))
                 end_date = str(row.get('신청종료일자', ''))
-                reqst_period = f"{start_date} ~ {end_date}" if start_date and end_date else ""
                 
-                # 레코드 생성 (실제 테이블 컬럼명에 맞게 수정)
+                # 신규 레코드 생성
                 record = {
                     'pblanc_id': pblanc_id,
                     'pblanc_nm': str(row.get('공고명', '')),
-                    'spnsr_organ_nm': str(row.get('소관부처', '')),  # 소관부처
-                    'exctv_organ_nm': str(row.get('사업수행기관', '')),  # 수행기관
+                    'spnsr_organ_nm': str(row.get('소관부처', '')),
+                    'exctv_organ_nm': str(row.get('사업수행기관', '')),
                     'reqst_begin_ymd': start_date,
                     'reqst_end_ymd': end_date,
                     'sprt_realm_nm': str(row.get('지원분야', '')),
@@ -110,21 +122,29 @@ def main():
                     'created_at': datetime.now().isoformat()
                 }
                 
-                # 중복 체크 후 저장
-                existing = supabase.table('bizinfo_complete').select('id').eq('pblanc_id', record['pblanc_id']).execute()
+                new_records.append(record)
+                print(f"  [{idx+1}/{len(df)}] ✅ 신규: {record['pblanc_nm'][:30]}...")
                 
-                if not existing.data:
-                    result = supabase.table('bizinfo_complete').insert(record).execute()
-                    if result.data:
-                        success_count += 1
-                        print(f"  [{idx+1}/{len(df)}] ✅ 저장: {record['pblanc_nm'][:30]}...")
-                else:
-                    duplicate_count += 1
-                    print(f"  [{idx+1}/{len(df)}] ⏭️ 중복: {record['pblanc_nm'][:30]}...")
-                    
             except Exception as e:
                 print(f"  [{idx+1}/{len(df)}] ❌ 오류: {e}")
                 continue
+        
+        # 7. 배치 삽입 (한 번에!)
+        success_count = 0
+        if new_records:
+            print(f"\n배치 저장 중... ({len(new_records)}개)")
+            
+            # 100개씩 나눠서 저장 (Supabase 제한)
+            batch_size = 100
+            for i in range(0, len(new_records), batch_size):
+                batch = new_records[i:i+batch_size]
+                try:
+                    result = supabase.table('bizinfo_complete').insert(batch).execute()
+                    if result.data:
+                        success_count += len(result.data)
+                        print(f"  배치 {i//batch_size + 1} 저장 완료: {len(result.data)}개")
+                except Exception as e:
+                    print(f"  배치 저장 오류: {e}")
         
         print(f"\n=== 수집 완료 ===")
         print(f"✅ 신규 저장: {success_count}개")
