@@ -1,12 +1,13 @@
-name: K-Startup Complete
+name: 📊 K-Startup 자동 수집
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 22 * * 0-4'
+    - cron: '0 22 * * 0-4'  # 평일 오전 7시 (KST)
 
 jobs:
   collect:
+    name: K-Startup 자동 처리
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
