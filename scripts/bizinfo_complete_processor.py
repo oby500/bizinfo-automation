@@ -312,14 +312,14 @@ class BizInfoCompleteProcessor:
         return '\n'.join(summary_parts)
     
     def update_database(self, record_id, attachments, hashtags, summary):
-        """DB 업데이트 (컬럼명 수정: hash_tag)"""
+        """DB 업데이트 (컬럼명 수정: updt_dt)"""
         try:
             update_data = {
                 'attachment_urls': attachments if attachments else [],
-                'hash_tag': hashtags,  # hash_tags -> hash_tag
+                'hash_tag': hashtags,
                 'bsns_sumry': summary,
                 'attachment_processing_status': 'completed',
-                'updated_at': datetime.now().isoformat()
+                'updt_dt': datetime.now().isoformat()  # updated_at -> updt_dt
             }
             
             result = self.supabase.table('bizinfo_complete').update(
