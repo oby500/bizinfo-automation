@@ -28,6 +28,7 @@ jobs:
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "Starting Bizinfo collection..."
         python scripts/bizinfo_excel_collector.py
@@ -36,6 +37,39 @@ jobs:
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "Processing attachments..."
         python scripts/bizinfo_complete_processor.py
+    
+    - name: Generate Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== 처리 결과 보고서 ==="
+        python -c "
+import os
+from supabase import create_client
+from datetime import datetime
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_SERVICE_KEY')
+
+if url and key:
+    supabase = create_client(url, key)
+    
+    # 오늘 데이터
+    today = datetime.now().date().isoformat()
+    today_data = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
+    
+    # 전체 데이터
+    total_data = supabase.table('bizinfo_complete').select('id').execute()
+    
+    print(f'📊 기업마당 처리 결과')
+    print(f'전체: {len(total_data.data)}개')
+    print(f'오늘 신규: {len(today_data.data)}개')
+else:
+    print('환경변수 설정 오류')
+"
