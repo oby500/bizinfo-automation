@@ -35,73 +35,14 @@ jobs:
         echo "실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
         python scripts/kstartup_collector.py
     
-    - name: Process Attachments and Summary
+    - name: Process Attachments and Generate Summary
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "=== K-Startup 첨부파일 및 요약 처리 ==="
-        python -c "
-import os
-import sys
-import time
-import requests
-from datetime import datetime
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-from supabase import create_client
-
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY')
-supabase = create_client(url, key)
-
-# 처리 대상 조회
-result = supabase.table('kstartup_complete').select(
-    'id', 'announcement_id', 'biz_pbanc_nm', 'detl_pg_url',
-    'pbanc_ntrp_nm', 'aply_trgt_ctnt', 'pbanc_rcpt_end_dt'
-).or_(
-    'attachment_urls.is.null',
-    'bsns_sumry.is.null'
-).limit(50).execute()
-
-processed = 0
-for item in result.data:
-    try:
-        # 해시태그 생성
-        tags = []
-        if item.get('pbanc_ntrp_nm'):
-            tags.append(f\"#{item['pbanc_ntrp_nm'][:15]}\")
-        if item.get('aply_trgt_ctnt'):
-            if '스타트업' in item['aply_trgt_ctnt']:
-                tags.append('#스타트업')
-            if '청년' in item['aply_trgt_ctnt']:
-                tags.append('#청년창업')
-        
-        # 요약 생성
-        summary = f\"📋 {item['biz_pbanc_nm']}\\n\"
-        if item.get('pbanc_ntrp_nm'):
-            summary += f\"🏢 주관: {item['pbanc_ntrp_nm']}\\n\"
-        if item.get('pbanc_rcpt_end_dt'):
-            summary += f\"📅 마감: {item['pbanc_rcpt_end_dt']}\\n\"
-        if tags:
-            summary += f\"🏷️ {' '.join(tags[:5])}\"
-        
-        # DB 업데이트
-        supabase.table('kstartup_complete').update({
-            'bsns_sumry': summary,
-            'hash_tags': ' '.join(tags),
-            'updated_at': datetime.now().isoformat()
-        }).eq('id', item['id']).execute()
-        
-        processed += 1
-        print(f\"처리: {item['biz_pbanc_nm'][:30]}...\")
-        time.sleep(0.5)
-        
-    except Exception as e:
-        print(f\"오류: {e}\")
-        continue
-
-print(f\"\\n✅ 처리 완료: {processed}개\")"
+        echo "=== K-Startup 첨부파일 처리 및 요약 생성 ==="
+        echo "실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
+        python scripts/kstartup_complete_processor.py
     
     - name: Generate Summary Report
       if: always()
@@ -129,10 +70,15 @@ try:
     today_result = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
     today_count = len(today_result.data) if today_result.data else 0
     
+    # 첨부파일 보유 데이터
+    attachment_result = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
+    attachment_count = len(attachment_result.data) if attachment_result.data else 0
+    
     print(f'📊 K-Startup 처리 현황')
     print(f'━━━━━━━━━━━━━━━━━━━━━━')
     print(f'전체 데이터: {total_count}개')
     print(f'오늘 추가: {today_count}개')
+    print(f'첨부파일 보유: {attachment_count}개')
     print(f'처리 시간: {datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}')'
 except Exception as e:
     print(f'통계 생성 실패: {e}')"
