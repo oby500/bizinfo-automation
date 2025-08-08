@@ -1,4 +1,4 @@
-name: 🧪 System Test
+name: System Test
 
 on:
   workflow_dispatch:
