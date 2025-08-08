@@ -1,0 +1,42 @@
+name: Manual Bizinfo Process
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Run in debug mode'
+        required: false
+        default: 'false'
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install selenium webdriver-manager pandas openpyxl
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Run collector
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "Starting bizinfo collection..."
+        python scripts/bizinfo_excel_collector.py
+    
+    - name: Run processor
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "Processing attachments and hashtags..."
+        python scripts/bizinfo_complete_processor.py
