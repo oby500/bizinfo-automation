@@ -1,20 +1,21 @@
-name: K-Startup Manual Test
+name: 🔧 K-Startup 수동 실행
 
 on:
-  workflow_dispatch:  # 수동 실행 전용
+  workflow_dispatch:
     inputs:
       action:
         description: '실행할 작업 선택'
         required: true
-        default: 'attachment_only'
+        default: 'full_process'
         type: choice
         options:
-          - attachment_only  # 첨부파일 처리만
-          - collect_only     # 수집만
           - full_process     # 수집 + 처리 전체
+          - collect_only     # 수집만
+          - attachment_only  # 첨부파일 처리만
 
 jobs:
-  test-kstartup:
+  manual-kstartup:
+    name: K-Startup 수동 처리
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
@@ -39,6 +40,7 @@ jobs:
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "=== K-Startup 데이터 수집 ==="
+        echo "실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
         python scripts/kstartup_collector.py
     
     - name: Process Attachments
@@ -54,35 +56,35 @@ jobs:
       if: always()
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "=== 처리 결과 확인 ==="
-        python -c "
-import os
-from supabase import create_client
-from datetime import datetime, timedelta
-
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY')
-supabase = create_client(url, key)
-
-# 최근 처리된 데이터 5개
-recent = supabase.table('kstartup_complete').select(
-    'biz_pbanc_nm', 'attachment_count', 'created_at', 'updated_at'
-).order('updated_at', desc=True).limit(5).execute()
-
-print('최근 처리된 K-Startup 데이터:')
-print('=' * 50)
-for item in recent.data:
-    print(f\"제목: {item['biz_pbanc_nm'][:40]}...\")
-    print(f\"첨부파일: {item.get('attachment_count', 0)}개\")
-    print(f\"업데이트: {item['updated_at']}\")
-    print('-' * 50)
-
-# 통계
-total = supabase.table('kstartup_complete').select('id').execute()
-with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
-
-print(f'\n📊 전체 통계:')
-print(f'전체: {len(total.data)}개')
-print(f'첨부파일 보유: {len(with_attach.data)}개')"
+        cat << 'EOF' > report.py
+        import os
+        from supabase import create_client
+        from datetime import datetime
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+        
+        if not url or not key:
+            print("환경변수 오류")
+            exit(1)
+            
+        supabase = create_client(url, key)
+        
+        # 오늘 처리된 데이터
+        today = datetime.now().date().isoformat()
+        today_data = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
+        
+        # 첨부파일 현황
+        with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
+        
+        print('=' * 50)
+        print('   K-STARTUP 수동 실행 결과')
+        print('=' * 50)
+        print(f'📊 오늘 처리: {len(today_data.data)}개')
+        print(f'📎 첨부파일 보유: {len(with_attach.data)}개')
+        print(f'⏰ 완료 시간: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        print('=' * 50)
+        EOF
+        python report.py
