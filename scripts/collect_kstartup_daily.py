@@ -4,6 +4,7 @@ K-Startup 스마트 일일 수집
 - 최근 200개(2페이지)만 확인
 - announcement_id로 중복 체크
 - 신규 공고만 저장
+- 해시태그 제거 (벡터 DB 사용 예정)
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -153,15 +154,8 @@ def process_page(page_no, existing_ids, now):
             else:
                 record['status'] = '상태미정'
             
-            # 해시태그
-            hashtags = []
-            if record.get('supt_biz_clsfc'):
-                hashtags.append(f"#{record['supt_biz_clsfc'].replace(' ', '_')}")
-            if record.get('supt_regin'):
-                hashtags.append(f"#{record['supt_regin'].replace(' ', '_')}")
-            if record['status'] == '마감임박':
-                hashtags.append("#마감임박")
-            record['hash_tag'] = " ".join(hashtags) if hashtags else None
+            # 해시태그 제거 - 벡터 DB 사용 예정
+            # hash_tag 필드를 생성하지 않음
             
             # 추가 필드
             additional_data = {}
