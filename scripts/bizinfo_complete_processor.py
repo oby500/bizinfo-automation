@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 기업마당 통합 처리 스크립트 (GitHub Actions용)
-- 첨부파일 링크 크롤링
+- 첨부파일 링크 크롤링 (safe_filename, display_filename 포함)
 - 해시태그 및 요약 생성
 """
 import os
@@ -43,9 +43,110 @@ class BizInfoCompleteProcessor:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Referer': 'https://www.bizinfo.go.kr/'
         }
         
         logging.info("=== 기업마당 통합 처리 시작 ===")
+    
+    def clean_filename(self, text):
+        """파일명 정리 - 불필요한 텍스트 제거"""
+        if not text:
+            return None
+        
+        # 파일명 패턴: 확장자를 포함한 파일명 찾기
+        patterns = [
+            r'([^\/\\:*?"<>|\n\r\t]+\.(?:hwp|hwpx|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|jpg|jpeg|png|gif|txt|rtf))\b',
+            r'([^\s]+\.(?:hwp|hwpx|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|jpg|jpeg|png|gif|txt|rtf))\b'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                filename = match.group(1).strip()
+                # 첨부파일, 다운로드 등의 단어 제거
+                filename = re.sub(r'^(첨부파일\s*|다운로드\s*)', '', filename)
+                filename = re.sub(r'\s*(다운로드|첨부파일)\s*$', '', filename)
+                return filename
+        
+        return None
+    
+    def create_safe_filename(self, pblanc_id, index, original_filename):
+        """안전한 파일명 생성"""
+        if original_filename:
+            # 확장자 추출
+            ext = ''
+            if '.' in original_filename:
+                ext = original_filename.split('.')[-1].lower()
+                # 확장자가 너무 길면 unknown
+                if len(ext) > 10:
+                    ext = 'unknown'
+            else:
+                ext = 'unknown'
+            
+            # 안전한 파일명: pblanc_id_순번.확장자
+            safe_name = f"{pblanc_id}_{index:02d}.{ext}"
+            return safe_name
+        
+        # 파일명을 알 수 없는 경우
+        return f"{pblanc_id}_{index:02d}.unknown"
+    
+    def get_filename_from_head_request(self, url):
+        """HEAD 요청으로 실제 파일명 추출"""
+        try:
+            response = requests.head(url, headers=self.headers, allow_redirects=True, timeout=5)
+            content_disposition = response.headers.get('Content-Disposition', '')
+            
+            if content_disposition:
+                # filename*=UTF-8'' 패턴
+                match = re.search(r"filename\*=UTF-8''([^;]+)", content_disposition)
+                if match:
+                    filename = requests.utils.unquote(match.group(1))
+                    return filename
+                
+                # filename= 패턴
+                match = re.search(r'filename="?([^"\;]+)"?', content_disposition)
+                if match:
+                    filename = match.group(1)
+                    try:
+                        filename = filename.encode('iso-8859-1').decode('utf-8')
+                    except:
+                        pass
+                    return filename
+        except:
+            pass
+        
+        return None
+    
+    def extract_hashtags_from_page(self, soup):
+        """페이지에서 해시태그 추출"""
+        hashtags = []
+        
+        try:
+            # tag_ul_list 클래스 찾기
+            tag_list = soup.find('ul', class_='tag_ul_list')
+            if tag_list:
+                tag_items = tag_list.find_all('li', class_=re.compile(r'tag_li_list\d'))
+                for item in tag_items:
+                    link = item.find('a')
+                    if link:
+                        tag_text = link.get_text(strip=True)
+                        if tag_text and tag_text not in hashtags:
+                            hashtags.append(tag_text)
+            
+            # 대체 패턴: hashtag 클래스
+            if not hashtags:
+                hashtag_elements = soup.find_all(class_=re.compile(r'hashtag', re.I))
+                for elem in hashtag_elements:
+                    tag_text = elem.get_text(strip=True)
+                    if tag_text and tag_text not in hashtags:
+                        hashtags.append(tag_text)
+        except:
+            pass
+        
+        return hashtags
     
     def run(self):
         """전체 프로세스 실행"""
@@ -69,14 +170,18 @@ class BizInfoCompleteProcessor:
                     
                     # 첨부파일 크롤링
                     attachments = []
+                    page_hashtags = []
+                    
                     if item.get('dtl_url'):
-                        attachments = self.extract_attachments(item['pblanc_id'], item['dtl_url'])
+                        attachments, page_hashtags = self.extract_attachments(item['pblanc_id'], item['dtl_url'])
                         if attachments:
                             attachment_count += len(attachments)
                             logging.info(f"  ├─ 첨부파일: {len(attachments)}개")
+                            for att_idx, att in enumerate(attachments, 1):
+                                logging.info(f"    └─ {att.get('safe_filename', '')} => {att.get('display_filename', '')}")
                     
-                    # 해시태그 생성
-                    hashtags = self.generate_hashtags(item)
+                    # 해시태그 생성 (페이지 해시태그 + 자동 생성)
+                    hashtags = self.generate_hashtags(item, page_hashtags)
                     if hashtags:
                         logging.info(f"  ├─ 해시태그: {len(hashtags.split())}개")
                     
@@ -117,55 +222,43 @@ class BizInfoCompleteProcessor:
             raise
     
     def get_unprocessed_announcements(self, limit=None):
-        """처리 안 된 공고 조회 (수정)"""
+        """처리 안 된 공고 조회"""
         try:
-            # attachment_urls가 비어있는 데이터 조회
             query = self.supabase.table('bizinfo_complete').select(
-                'id', 'pblanc_id', 'pblanc_nm', 'dtl_url', 
+                'id', 'pblanc_id', 'pblanc_nm', 'dtl_url',
                 'spnsr_organ_nm', 'exctv_organ_nm', 'sprt_realm_nm',
-                'reqst_begin_ymd', 'reqst_end_ymd'
-            ).or_(
-                'attachment_urls.is.null,attachment_urls.eq.[]'
-            ).order('created_at', desc=True)
-            
-            if limit:
-                query = query.limit(limit)
-            else:
-                query = query.limit(100)  # 한 번에 최대 100개
+                'reqst_begin_ymd', 'reqst_end_ymd', 'attachment_urls'
+            ).order('created_at', desc=True).limit(500)
             
             result = query.execute()
-            return result.data
+            
+            # attachment_urls가 없거나 safe_filename이 없는 것만 필터
+            unprocessed = []
+            for item in result.data:
+                if not item.get('attachment_urls'):
+                    # attachment_urls가 비어있음
+                    item.pop('attachment_urls', None)
+                    unprocessed.append(item)
+                else:
+                    # attachment_urls는 있는데 safe_filename이 없는 경우
+                    urls_str = json.dumps(item['attachment_urls'])
+                    if 'safe_filename' not in urls_str:
+                        item.pop('attachment_urls', None)
+                        unprocessed.append(item)
+                
+                if limit and len(unprocessed) >= limit:
+                    break
+            
+            return unprocessed[:100]  # 최대 100개
             
         except Exception as e:
             logging.error(f"데이터 조회 오류: {e}")
-            # or_ 오류 시 다른 방법 시도
-            try:
-                query = self.supabase.table('bizinfo_complete').select(
-                    'id', 'pblanc_id', 'pblanc_nm', 'dtl_url',
-                    'spnsr_organ_nm', 'exctv_organ_nm', 'sprt_realm_nm',
-                    'reqst_begin_ymd', 'reqst_end_ymd', 'attachment_urls'
-                ).order('created_at', desc=True).limit(500)
-                
-                result = query.execute()
-                # attachment_urls가 없거나 빈 배열인 것만 필터
-                unprocessed = []
-                for item in result.data:
-                    if not item.get('attachment_urls') or item.get('attachment_urls') == []:
-                        # attachment_urls 필드 제거 (필요없음)
-                        item.pop('attachment_urls', None)
-                        unprocessed.append(item)
-                        if limit and len(unprocessed) >= limit:
-                            break
-                
-                return unprocessed[:100]  # 최대 100개
-            except Exception as e2:
-                logging.error(f"대체 조회도 실패: {e2}")
-                return []
+            return []
     
     def extract_attachments(self, pblanc_id, detail_url):
-        """상세 페이지에서 첨부파일 추출"""
+        """상세 페이지에서 첨부파일 추출 (safe_filename 포함)"""
         if not detail_url:
-            return []
+            return [], []
         
         try:
             response = requests.get(detail_url, headers=self.headers, timeout=15)
@@ -174,48 +267,103 @@ class BizInfoCompleteProcessor:
             soup = BeautifulSoup(response.content, 'html.parser')
             attachments = []
             
+            # 해시태그 추출
+            page_hashtags = self.extract_hashtags_from_page(soup)
+            
             # 첨부파일 패턴
             patterns = [
-                r'getImageFile\.do',
-                r'FileDownload\.do', 
-                r'downloadFile',
-                r'다운로드|download'
+                {'regex': r'getImageFile\.do', 'type': 'getImageFile'},
+                {'regex': r'FileDownload\.do', 'type': 'FileDownload'},
+                {'regex': r'downloadFile', 'type': 'downloadFile'},
+                {'regex': r'download\.do', 'type': 'download'},
+                {'regex': r'/cmm/fms/', 'type': 'fms'}
             ]
-            
-            # 첨부파일 영역 찾기
-            file_areas = soup.find_all(['div', 'td', 'ul'], class_=re.compile(r'attach|file|down', re.I))
             
             # 모든 링크 검사
             all_links = soup.find_all('a', href=True)
+            attachment_index = 0
+            
             for link in all_links:
                 href = link.get('href', '')
                 text = link.get_text(strip=True)
+                onclick = link.get('onclick', '')
+                title = link.get('title', '')
                 
-                # 패턴 매칭
+                # 첨부파일 관련 링크 찾기
                 for pattern in patterns:
-                    if re.search(pattern, href + text, re.I):
-                        full_url = urljoin(detail_url, href)
+                    if re.search(pattern['regex'], href) or re.search(pattern['regex'], onclick):
+                        # onclick에서 URL 추출
+                        if onclick and not href:
+                            url_match = re.search(r"['\"]([^'\"]*" + pattern['regex'] + r"[^'\"]*)['\"]", onclick)
+                            if url_match:
+                                href = url_match.group(1)
                         
-                        attachment = {
-                            'url': full_url,
-                            'name': text or '첨부파일',
-                            'type': self.get_file_type(text, href)
-                        }
-                        
-                        # 중복 제거
-                        if attachment['url'] not in [a['url'] for a in attachments]:
-                            attachments.append(attachment)
+                        if href:
+                            full_url = urljoin(detail_url, href)
+                            
+                            # URL 파라미터 추출
+                            parsed = urlparse(full_url)
+                            params = parse_qs(parsed.query)
+                            
+                            # 파일명 찾기
+                            display_filename = None
+                            original_filename = text or '첨부파일'
+                            
+                            # 1. 링크 텍스트에서 파일명 찾기
+                            if text and text != '다운로드':
+                                display_filename = self.clean_filename(text)
+                                if display_filename:
+                                    original_filename = display_filename
+                            
+                            # 2. title 속성에서 찾기
+                            if not display_filename and title:
+                                display_filename = self.clean_filename(title)
+                                if display_filename:
+                                    original_filename = display_filename
+                            
+                            # 3. HEAD 요청으로 실제 파일명 가져오기
+                            if not display_filename or display_filename == '첨부파일':
+                                real_filename = self.get_filename_from_head_request(full_url)
+                                if real_filename:
+                                    display_filename = real_filename
+                                    original_filename = real_filename
+                            
+                            # display_filename이 없으면 기본값
+                            if not display_filename:
+                                display_filename = f"첨부파일_{attachment_index + 1}"
+                            
+                            # 중복 체크
+                            if full_url not in [a['url'] for a in attachments]:
+                                attachment_index += 1
+                                
+                                # safe_filename 생성
+                                safe_filename = self.create_safe_filename(pblanc_id, attachment_index, display_filename)
+                                
+                                # 파일 타입 결정
+                                file_type = self.get_file_type(display_filename, href)
+                                
+                                attachment = {
+                                    'url': full_url,
+                                    'text': '다운로드',
+                                    'type': file_type,
+                                    'params': {k: v[0] if len(v) == 1 else v for k, v in params.items()},
+                                    'safe_filename': safe_filename,
+                                    'display_filename': display_filename,
+                                    'original_filename': original_filename
+                                }
+                                
+                                attachments.append(attachment)
                         break
             
-            return attachments
+            return attachments, page_hashtags
             
         except Exception as e:
             logging.error(f"첨부파일 크롤링 오류: {e}")
-            return []
+            return [], []
     
-    def get_file_type(self, text, url):
+    def get_file_type(self, filename, url):
         """파일 타입 추출"""
-        text_lower = text.lower()
+        text_lower = filename.lower() if filename else ''
         url_lower = url.lower()
         
         if any(ext in text_lower + url_lower for ext in ['.hwp', 'hwp']):
@@ -230,12 +378,18 @@ class BizInfoCompleteProcessor:
             return 'PPT'
         elif any(ext in text_lower + url_lower for ext in ['.zip', '.rar']):
             return 'ZIP'
+        elif any(ext in text_lower + url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+            return 'IMAGE'
         else:
             return 'FILE'
     
-    def generate_hashtags(self, item):
-        """해시태그 생성"""
+    def generate_hashtags(self, item, page_hashtags=None):
+        """해시태그 생성 (페이지 해시태그 + 자동 생성)"""
         tags = []
+        
+        # 페이지에서 추출한 해시태그 추가
+        if page_hashtags:
+            tags.extend(page_hashtags[:5])  # 최대 5개
         
         # 지원분야에서 추출
         if item.get('sprt_realm_nm'):
@@ -252,7 +406,7 @@ class BizInfoCompleteProcessor:
         # 공고명에서 주요 키워드 추출
         if item.get('pblanc_nm'):
             title = item['pblanc_nm']
-            title_keywords = ['R&D', 'AI', '인공지능', '빅데이터', '바이오', '환경', '그린', 
+            title_keywords = ['R&D', 'AI', '인공지능', '빅데이터', '바이오', '환경', '그린',
                             '디지털', '혁신', '글로벌', '수출', '기술개발', '사업화', '투자',
                             '스타트업', '중소기업', '소상공인', '창업']
             for keyword in title_keywords:
@@ -312,14 +466,14 @@ class BizInfoCompleteProcessor:
         return '\n'.join(summary_parts)
     
     def update_database(self, record_id, attachments, hashtags, summary):
-        """DB 업데이트 (컬럼명 수정: updt_dt)"""
+        """DB 업데이트"""
         try:
             update_data = {
                 'attachment_urls': attachments if attachments else [],
                 'hash_tag': hashtags,
                 'bsns_sumry': summary,
                 'attachment_processing_status': 'completed',
-                'updt_dt': datetime.now().isoformat()  # updated_at -> updt_dt
+                'updt_dt': datetime.now().isoformat()
             }
             
             result = self.supabase.table('bizinfo_complete').update(
