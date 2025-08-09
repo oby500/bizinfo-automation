@@ -1,0 +1,140 @@
+name: K-Startup Auto Collection (Improved)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * 0-4'  # 평일 오전 7시 (KST)
+
+jobs:
+  collect:
+    name: K-Startup 자동 처리 (개선 버전)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Run K-Startup Collection (Improved Version)
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "Starting K-Startup IMPROVED collection (BizInfo style)..."
+        python scripts/kstartup_collector_improved.py
+    
+    - name: Generate Final Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        cat << 'EOF' > report.py
+        import os
+        from supabase import create_client
+        from datetime import datetime, timedelta
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+        
+        if not url or not key:
+            print("환경변수 오류: SUPABASE_URL 또는 SUPABASE_SERVICE_KEY가 설정되지 않았습니다.")
+            exit(1)
+            
+        supabase = create_client(url, key)
+        
+        try:
+            # 전체 통계
+            total = supabase.table('kstartup_complete').select('id').execute()
+            total_count = len(total.data) if total.data else 0
+            
+            # 오늘 추가된 데이터
+            today = datetime.now().date().isoformat()
+            today_new = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
+            today_count = len(today_new.data) if today_new.data else 0
+            
+            # 첨부파일 보유 데이터
+            with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
+            attach_count = len(with_attach.data) if with_attach.data else 0
+            
+            # 정상 확장자 vs unknown 확장자
+            all_attachments = supabase.table('kstartup_complete').select('attachment_urls').neq('attachment_urls', '[]').execute()
+            unknown_count = 0
+            proper_count = 0
+            if all_attachments.data:
+                for item in all_attachments.data:
+                    if item.get('attachment_urls'):
+                        for att in item['attachment_urls']:
+                            if isinstance(att, dict):
+                                filename = att.get('safe_filename', '')
+                                if filename.endswith('.unknown'):
+                                    unknown_count += 1
+                                else:
+                                    proper_count += 1
+            
+            # 해시태그 보유
+            with_hashtag = supabase.table('kstartup_complete').select('id').neq('hash_tag', '').execute()
+            hashtag_count = len(with_hashtag.data) if with_hashtag.data else 0
+            
+            # 최근 처리 데이터 5개
+            recent = supabase.table('kstartup_complete').select(
+                'biz_pbanc_nm', 'pbanc_ntrp_nm', 'attachment_count', 'hash_tag', 'created_at'
+            ).order('created_at', desc=True).limit(5).execute()
+            
+            print('\n' + '='*50)
+            print('      K-STARTUP 수집 결과 보고서')
+            print('='*50)
+            print('\n📊 전체 통계')
+            print('━' * 40)
+            print(f'전체 데이터: {total_count}개')
+            print(f'오늘 신규 추가: {today_count}개')
+            print(f'첨부파일 보유: {attach_count}개 ({attach_count/total_count*100:.1f}%)')
+            print(f'해시태그 보유: {hashtag_count}개 ({hashtag_count/total_count*100:.1f}%)')
+            
+            print('\n📎 첨부파일 품질')
+            print('━' * 40)
+            print(f'정상 파일명: {proper_count}개')
+            print(f'Unknown 확장자: {unknown_count}개')
+            
+            if unknown_count == 0:
+                print('✅ 모든 첨부파일이 정확한 확장자를 가지고 있습니다!')
+            elif unknown_count < proper_count:
+                print(f'⚠️ 개선됨: Unknown 비율 {unknown_count/(unknown_count+proper_count)*100:.1f}%')
+            else:
+                print(f'🔴 문제: Unknown 확장자가 {unknown_count}개 있습니다.')
+            
+            if today_count > 0:
+                print('\n✅ 오늘 처리 성공!')
+            else:
+                print('\n⚠️ 오늘 새로운 데이터가 없습니다')
+            
+            print('\n📝 최근 추가 데이터 (상위 5개)')
+            print('━' * 40)
+            if recent.data:
+                for item in recent.data[:5]:
+                    print(f"• {item['biz_pbanc_nm'][:40]}...")
+                    if item.get('pbanc_ntrp_nm'):
+                        print(f"  주관: {item['pbanc_ntrp_nm']}")
+                    print(f"  첨부: {item.get('attachment_count', 0)}개")
+                    if item.get('hash_tag'):
+                        print(f"  태그: {item['hash_tag'][:50]}")
+                    print(f"  등록: {item['created_at'][:10]}")
+                    print()
+            else:
+                print("최근 데이터가 없습니다.")
+            
+            print('━' * 40)
+            print(f'처리 완료 시간: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            print('='*50)
+            
+        except Exception as e:
+            print(f"보고서 생성 중 오류: {e}")
+            exit(1)
+        EOF
+        python report.py
