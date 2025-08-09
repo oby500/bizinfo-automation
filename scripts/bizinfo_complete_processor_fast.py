@@ -44,7 +44,7 @@ def generate_safe_filename(original_filename: str, announcement_id: str, index: 
 def process_single_announcement(item: Dict[str, Any]) -> Dict[str, Any]:
     """단일 공고 처리"""
     try:
-        announcement_id = item.get('pblancId', '')
+        announcement_id = item.get('pblanc_id', '')  # 수정: pblancId -> pblanc_id
         attachment_urls = item.get('attachment_urls', [])
         
         if not attachment_urls or not isinstance(attachment_urls, list):
@@ -114,7 +114,7 @@ def main():
     
     # safe_filename이 없는 데이터 조회
     response = supabase.table('bizinfo_complete')\
-        .select('id,pblancId,attachment_urls')\
+        .select('id,pblanc_id,attachment_urls')\
         .neq('attachment_urls', '[]')\
         .execute()
     
