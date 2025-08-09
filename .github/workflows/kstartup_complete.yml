@@ -21,13 +21,13 @@ jobs:
       run: |
         pip install requests beautifulsoup4 supabase
     
-    - name: Run K-Startup Collection
+    - name: Run K-Startup Collection (Fast Version)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Starting K-Startup collection..."
-        python scripts/kstartup_collector.py
+        echo "Starting K-Startup FAST collection..."
+        python scripts/kstartup_collector_fast.py
     
     - name: Run processor (Final Version - 속도+파일명 개선)
       env:
