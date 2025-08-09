@@ -29,13 +29,13 @@ jobs:
         echo "Starting K-Startup collection..."
         python scripts/kstartup_collector.py
     
-    - name: Run processor
+    - name: Run processor (Fast Version)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Processing attachments and hashtags..."
-        python scripts/kstartup_complete_processor.py
+        echo "Processing attachments and hashtags (Fast Version)..."
+        python scripts/kstartup_complete_processor_fast.py
     
     - name: Generate Final Report
       if: always()
