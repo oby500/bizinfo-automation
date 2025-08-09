@@ -1,0 +1,84 @@
+name: K-Startup Daily Collection
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * *'  # 매일 오전 7시 (KST = UTC+9)
+
+jobs:
+  daily_collect:
+    name: K-Startup 일일 수집
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase python-dotenv lxml
+    
+    - name: Daily Collection (최근 200개 확인)
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🚀 K-Startup 일일 수집 시작..."
+        echo "⏰ 실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
+        python scripts/collect_kstartup_daily.py
+    
+    - name: Parse New Announcements
+      if: success()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📝 신규 공고 상세 파싱..."
+        python scripts/kstartup_parallel_parser.py
+      continue-on-error: true
+    
+    - name: Process Attachments
+      if: success()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📎 첨부파일 처리..."
+        python scripts/kstartup_attachment_fix.py
+      continue-on-error: true
+    
+    - name: Summary Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📊 일일 수집 결과 요약"
+        python -c "
+        import os
+        from supabase import create_client
+        from datetime import datetime, timedelta
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_KEY')
+        supabase = create_client(url, key)
+        
+        # 오늘 추가된 데이터
+        today = datetime.now().date().isoformat()
+        result = supabase.table('kstartup_complete').select('biz_pbanc_nm, status, recept_end_dt').gte('created_at', today).execute()
+        
+        if result.data:
+            print(f'✅ 오늘 추가된 공고: {len(result.data)}개')
+            for item in result.data[:5]:
+                print(f\"  - [{item['status']}] {item['biz_pbanc_nm'][:50]}\")
+        else:
+            print('오늘 추가된 공고 없음')
+        
+        # 전체 통계
+        total = supabase.table('kstartup_complete').select('id').execute()
+        print(f'\\n💾 DB 전체: {len(total.data)}개')
+        "
