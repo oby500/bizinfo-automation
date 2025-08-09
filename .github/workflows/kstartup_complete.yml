@@ -29,13 +29,13 @@ jobs:
         echo "Starting K-Startup collection..."
         python scripts/kstartup_collector.py
     
-    - name: Run processor (Fixed Version - 파일명 개선)
+    - name: Run processor (Final Version - 속도+파일명 개선)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Processing attachments with improved filename extraction..."
-        python scripts/kstartup_complete_processor_fixed.py
+        echo "Processing with FINAL version (Fast + Improved filenames)..."
+        python scripts/kstartup_complete_processor_final.py
     
     - name: Generate Final Report
       if: always()
@@ -114,6 +114,8 @@ jobs:
             print(f'Unknown 확장자: {unknown_count}개')
             if unknown_count > 0:
                 print(f'⚠️ 파일명 개선 필요: {unknown_count}개')
+            else:
+                print(f'✅ 모든 파일명 정상!')
             
             if today_count > 0 or updated_count > 0:
                 print('\n✅ 오늘 처리 성공!')
