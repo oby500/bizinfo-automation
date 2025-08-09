@@ -1,0 +1,141 @@
+name: Manual Fix Existing Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '처리 대상'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - bizinfo
+          - kstartup
+      limit:
+        description: '처리 개수 제한 (0=전체)'
+        required: false
+        default: '0'
+        type: string
+
+jobs:
+  fix-data:
+    name: 기존 데이터 수정
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Fix BizInfo Data
+      if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == 'bizinfo' }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== 기업마당 기존 데이터 수정 ==="
+        echo "대상: safe_filename 없는 모든 데이터"
+        python scripts/bizinfo_complete_processor_fast.py
+    
+    - name: Fix K-Startup Data  
+      if: ${{ github.event.inputs.target == 'all' || github.event.inputs.target == 'kstartup' }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=== K-Startup 기존 데이터 수정 ==="
+        echo "대상: unknown 확장자 및 safe_filename 없는 데이터"
+        python scripts/kstartup_complete_processor_final.py
+    
+    - name: Generate Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        cat << 'EOF' > report.py
+        import os
+        from supabase import create_client
+        from datetime import datetime
+        import json
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_SERVICE_KEY')
+        
+        supabase = create_client(url, key)
+        
+        print('\n' + '='*60)
+        print('          데이터 수정 결과 보고서')
+        print('='*60)
+        
+        # BizInfo 통계
+        print('\n📊 기업마당 (bizinfo_complete)')
+        print('-' * 50)
+        
+        bizinfo = supabase.table('bizinfo_complete').select('attachment_urls').neq('attachment_urls', '[]').execute()
+        
+        biz_total = len(bizinfo.data) if bizinfo.data else 0
+        biz_with_safe = 0
+        biz_unknown = 0
+        
+        for item in (bizinfo.data or []):
+            if item.get('attachment_urls'):
+                for att in item['attachment_urls']:
+                    if isinstance(att, dict):
+                        if att.get('safe_filename'):
+                            biz_with_safe += 1
+                            if att['safe_filename'].endswith('.unknown'):
+                                biz_unknown += 1
+        
+        print(f'전체 첨부파일: {biz_total}개')
+        print(f'├─ safe_filename 있음: {biz_with_safe}개')
+        print(f'└─ unknown 확장자: {biz_unknown}개')
+        
+        # K-Startup 통계
+        print('\n📊 K-Startup (kstartup_complete)')
+        print('-' * 50)
+        
+        kstartup = supabase.table('kstartup_complete').select('attachment_urls').neq('attachment_urls', '[]').execute()
+        
+        k_total = len(kstartup.data) if kstartup.data else 0
+        k_with_safe = 0
+        k_unknown = 0
+        
+        for item in (kstartup.data or []):
+            if item.get('attachment_urls'):
+                for att in item['attachment_urls']:
+                    if isinstance(att, dict):
+                        if att.get('safe_filename'):
+                            k_with_safe += 1
+                            if att['safe_filename'].endswith('.unknown'):
+                                k_unknown += 1
+        
+        print(f'전체 첨부파일: {k_total}개')
+        print(f'├─ safe_filename 있음: {k_with_safe}개')
+        print(f'└─ unknown 확장자: {k_unknown}개')
+        
+        # 개선 효과
+        print('\n✨ 개선 효과')
+        print('-' * 50)
+        
+        if biz_unknown == 0 and k_unknown == 0:
+            print('✅ 모든 파일 확장자가 정상입니다!')
+        else:
+            if biz_unknown > 0:
+                print(f'⚠️ 기업마당: {biz_unknown}개 unknown 확장자 남음')
+            if k_unknown > 0:
+                print(f'⚠️ K-Startup: {k_unknown}개 unknown 확장자 남음')
+        
+        print('\n' + '='*60)
+        print(f'보고서 생성: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        print('='*60)
+        
+        EOF
+        python report.py
