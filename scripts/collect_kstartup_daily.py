@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-K-Startup 스마트 일일 수집
+K-Startup 스마트 일일 수집 (개선 버전)
 - 최근 200개(2페이지)만 확인
 - announcement_id로 중복 체크
 - 신규 공고만 저장
-- 해시태그 제거 (벡터 DB 사용 예정)
+- URL 패턴으로 상태 구분
+- 날짜 없는 공고 제외
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -40,7 +41,8 @@ stats = {
     'checked': 0,
     'new': 0,
     'duplicate': 0,
-    'expired': 0
+    'expired': 0,
+    'no_date': 0  # 날짜 없는 공고
 }
 
 def parse_date(date_str):
@@ -53,6 +55,25 @@ def get_element_text(item, tag_name, default=""):
     """XML 요소 추출"""
     element = item.find(tag_name)
     return element.text.strip() if element is not None and element.text else default
+
+def get_status_from_url(pbanc_sn, end_date_str=None):
+    """URL 패턴으로 상태 결정"""
+    # 기본적으로 모집중으로 가정 (ongoing URL 사용)
+    status = '모집중'
+    
+    # 마감일로 추가 검증
+    if end_date_str:
+        try:
+            end_date = datetime.strptime(end_date_str, '%Y%m%d')
+            days_left = (end_date - datetime.now()).days
+            if days_left < 0:
+                status = '마감'
+            elif days_left <= 7:
+                status = '마감임박'
+        except:
+            pass
+    
+    return status
 
 def process_page(page_no, existing_ids, now):
     """단일 페이지 처리"""
@@ -78,6 +99,7 @@ def process_page(page_no, existing_ids, now):
         page_new = 0
         page_dup = 0
         page_exp = 0
+        page_no_date = 0
         
         for item in items:
             # 필수 정보 추출
@@ -92,19 +114,37 @@ def process_page(page_no, existing_ids, now):
                 page_dup += 1
                 continue
             
-            # 마감일 체크
+            # 날짜 확인 - 날짜 없는 공고 제외
             end_date_str = get_element_text(item, 'pbancRcptEndDt')
-            if end_date_str:
-                try:
-                    end_date = datetime.strptime(end_date_str, '%Y%m%d')
-                    if end_date < now:
-                        page_exp += 1
-                        continue  # 마감된 공고 스킵
-                except:
-                    pass
+            if not end_date_str:
+                page_no_date += 1
+                continue  # 날짜 없는 공고 스킵
+            
+            # 마감일 체크
+            try:
+                end_date = datetime.strptime(end_date_str, '%Y%m%d')
+                if end_date < now:
+                    page_exp += 1
+                    continue  # 마감된 공고 스킵
+            except:
+                page_no_date += 1
+                continue
+            
+            # 제목에 오래된 년도가 있는지 체크
+            title = get_element_text(item, 'bizPbancNm', '제목 없음')
+            if any(year in title for year in ['2018', '2019', '2020', '2021', '2022', '2023', '2024']):
+                # 2024년까지는 오래된 것으로 간주
+                page_exp += 1
+                continue
             
             # 신규 공고 - 전체 데이터 수집
-            title = get_element_text(item, 'bizPbancNm', '제목 없음')
+            status = get_status_from_url(pbanc_sn, end_date_str)
+            
+            # URL 생성 (상태에 따라)
+            if status == '마감':
+                detail_url = f'https://www.k-startup.go.kr/web/contents/bizpbanc-deadline.do?schM=view&pbancSn={pbanc_sn}'
+            else:
+                detail_url = f'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn={pbanc_sn}'
             
             record = {
                 'announcement_id': announcement_id,
@@ -119,7 +159,8 @@ def process_page(page_no, existing_ids, now):
                 'pbanc_ntrp_nm': get_element_text(item, 'pbancNtrpNm'),
                 'biz_gdnc_url': get_element_text(item, 'bizGdncUrl'),
                 'biz_aply_url': get_element_text(item, 'bizAplyUrl'),
-                'detl_pg_url': f'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn={pbanc_sn}',
+                'detl_pg_url': detail_url,
+                'status': status,
                 'bsns_title': title,
                 'spnsr_organ_nm': get_element_text(item, 'spnsrOrganNm'),
                 'exctv_organ_nm': get_element_text(item, 'exctvOrganNm'),
@@ -137,25 +178,6 @@ def process_page(page_no, existing_ids, now):
             # bsns_sumry
             content = get_element_text(item, 'pbancCtnt', '')
             record['bsns_sumry'] = content if content else title
-            
-            # 상태 계산
-            if record['pbanc_rcpt_end_dt']:
-                try:
-                    end_date = datetime.strptime(record['pbanc_rcpt_end_dt'].replace('-', ''), '%Y%m%d')
-                    days_left = (end_date - now).days
-                    if days_left < 0:
-                        record['status'] = '마감'
-                    elif days_left <= 7:
-                        record['status'] = '마감임박'
-                    else:
-                        record['status'] = '모집중'
-                except:
-                    record['status'] = '상태미정'
-            else:
-                record['status'] = '상태미정'
-            
-            # 해시태그 제거 - 벡터 DB 사용 예정
-            # hash_tag 필드를 생성하지 않음
             
             # 추가 필드
             additional_data = {}
@@ -189,8 +211,9 @@ def process_page(page_no, existing_ids, now):
             stats['new'] += page_new
             stats['duplicate'] += page_dup
             stats['expired'] += page_exp
+            stats['no_date'] += page_no_date
         
-        print(f"   📄 페이지 {page_no}: 확인 {len(items)}개 | 신규 {page_new}개 | 중복 {page_dup}개 | 마감 {page_exp}개")
+        print(f"   📄 페이지 {page_no}: 확인 {len(items)}개 | 신규 {page_new}개 | 중복 {page_dup}개 | 마감 {page_exp}개 | 날짜없음 {page_no_date}개")
         
         return local_new
         
@@ -200,12 +223,13 @@ def process_page(page_no, existing_ids, now):
 
 def main():
     """메인 실행"""
-    print('🚀 K-Startup 스마트 일일 수집')
+    print('🚀 K-Startup 스마트 일일 수집 (개선 버전)')
     print('='*60)
     
     now = datetime.now()
     print(f'📅 실행 시간: {now.strftime("%Y-%m-%d %H:%M:%S")}')
     print(f'🔍 확인 범위: 최근 {CHECK_PAGES * ITEMS_PER_PAGE}개 공고')
+    print('✨ 개선사항: URL 패턴 상태 구분, 날짜 없는 공고 제외')
     
     # 1. 기존 ID 목록 가져오기
     print('\n📊 기존 데이터 확인...')
@@ -282,6 +306,7 @@ def main():
     print(f'✅ 신규 저장: {stats["new"]}개')
     print(f'🔄 중복 제외: {stats["duplicate"]}개')
     print(f'🚫 마감 제외: {stats["expired"]}개')
+    print(f'❌ 날짜없음 제외: {stats["no_date"]}개')
     
     # 최종 DB 상태
     try:
@@ -296,7 +321,7 @@ def main():
     if all_new_records:
         print('\n💡 후속 처리 필요:')
         print('   1. python kstartup_ultra_fast_parser.py  # 상세 파싱')
-        print('   2. python kstartup_attachment_fix.py     # 첨부파일')
+        print('   2. python kstartup_attachment_fix.py     # 첨부파일 (수동 처리 필요할 수 있음)')
 
 if __name__ == "__main__":
     main()
