@@ -7,7 +7,7 @@ on:
 
 jobs:
   collect:
-    name: K-Startup 자동 처리
+    name: K-Startup 자동 처리 (3단계)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -19,15 +19,37 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install requests beautifulsoup4 supabase
+        pip install requests beautifulsoup4 supabase python-dotenv lxml
     
-    - name: Run K-Startup Collection (Improved Version)
+    # Step 1: 배치 수집 (전체 259페이지 확인)
+    - name: Step 1 - Batch Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Starting K-Startup collection with improved attachment handling..."
-        python scripts/kstartup_collector_improved.py
+        echo "🚀 Step 1: K-Startup 배치 수집 시작..."
+        python scripts/collect_kstartup_batch.py
+      continue-on-error: true
+    
+    # Step 2: bsns_sumry 병렬 파싱 (상세 내용)
+    - name: Step 2 - Parallel Parsing
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📝 Step 2: 상세 내용 병렬 파싱..."
+        python scripts/kstartup_parallel_parser.py
+      continue-on-error: true
+    
+    # Step 3: 첨부파일 정보 처리
+    - name: Step 3 - Attachment Processing
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📎 Step 3: 첨부파일 정보 처리..."
+        python scripts/kstartup_attachment_fix.py
+      continue-on-error: true
     
     - name: Generate Final Report
       if: always()
@@ -59,9 +81,21 @@ jobs:
             today_new = supabase.table('kstartup_complete').select('id').gte('created_at', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
             
+            # 상태별 통계
+            status_data = supabase.table('kstartup_complete').select('status').execute()
+            status_counts = {}
+            if status_data.data:
+                for item in status_data.data:
+                    status = item.get('status', '상태미정')
+                    status_counts[status] = status_counts.get(status, 0) + 1
+            
             # 첨부파일 통계
             with_attach = supabase.table('kstartup_complete').select('id').neq('attachment_urls', '[]').execute()
             attach_count = len(with_attach.data) if with_attach.data else 0
+            
+            # bsns_sumry 통계
+            with_sumry = supabase.table('kstartup_complete').select('id').neq('bsns_sumry', None).execute()
+            sumry_count = len(with_sumry.data) if with_sumry.data else 0
             
             # unknown 확장자 체크
             all_attachments = supabase.table('kstartup_complete').select('attachment_urls').neq('attachment_urls', '[]').execute()
@@ -78,19 +112,26 @@ jobs:
                                 else:
                                     proper_count += 1
             
-            print('\n' + '='*50)
-            print('      K-STARTUP 수집 결과')
-            print('='*50)
-            print(f'전체: {total_count}개 | 오늘 신규: {today_count}개')
-            print(f'첨부파일: {attach_count}개 ({attach_count/total_count*100:.1f}%)')
-            print(f'정상 확장자: {proper_count}개 | Unknown: {unknown_count}개')
+            print('\n' + '='*60)
+            print('      K-STARTUP 3단계 처리 결과')
+            print('='*60)
+            print(f'📊 전체: {total_count}개 | 오늘 신규/업데이트: {today_count}개')
+            print('')
+            print('📈 상태별 분포:')
+            for status, count in sorted(status_counts.items(), key=lambda x: x[1], reverse=True):
+                print(f'   - {status}: {count}개')
+            print('')
+            print(f'📝 상세내용(bsns_sumry): {sumry_count}개 ({sumry_count/total_count*100:.1f}%)')
+            print(f'📎 첨부파일: {attach_count}개 ({attach_count/total_count*100:.1f}%)')
+            print(f'   ✅ 정상: {proper_count}개 | ⚠️ Unknown: {unknown_count}개')
             
             if unknown_count == 0:
-                print('✅ 모든 첨부파일 정상!')
+                print('\n✅ 모든 첨부파일 정상 처리!')
             else:
-                print(f'⚠️ Unknown 파일 {unknown_count}개 존재')
+                print(f'\n⚠️ Unknown 파일 {unknown_count}개 재처리 필요')
             
-            print('='*50)
+            print('='*60)
+            print('✅ 3단계 처리 완료: 배치수집 → 병렬파싱 → 첨부파일')
             
         except Exception as e:
             print(f"보고서 오류: {e}")
