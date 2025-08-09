@@ -1,0 +1,121 @@
+name: Manual Fix K-Startup Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '처리할 데이터 개수'
+        required: false
+        default: '100'
+        type: string
+      action:
+        description: '실행할 작업'
+        required: true
+        default: 'enhance_quality'
+        type: choice
+        options:
+          - enhance_quality
+          - fix_unknown_ext
+          - fix_poor_summary
+          - fix_all
+
+jobs:
+  fix_data:
+    name: K-Startup 데이터 수정
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase
+    
+    - name: Run Quality Enhancer
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🔧 K-Startup 데이터 품질 개선 시작"
+        echo "📊 처리 개수: ${{ github.event.inputs.limit }}"
+        echo "🎯 작업 유형: ${{ github.event.inputs.action }}"
+        
+        python scripts/kstartup_quality_enhancer_fixed.py ${{ github.event.inputs.limit }}
+    
+    - name: Generate Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        cat << 'EOF' > report.py
+        import os
+        from supabase import create_client
+        from datetime import datetime
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_SERVICE_KEY')
+        
+        if not url or not key:
+            print("환경변수 오류")
+            exit(1)
+            
+        supabase = create_client(url, key)
+        
+        # 통계 수집
+        total = supabase.table('kstartup_complete').select('id', count='exact').execute()
+        
+        # unknown 확장자 개수
+        unknown = supabase.table('kstartup_complete')\
+            .select('id', count='exact')\
+            .like('attachment_urls', '%unknown%')\
+            .execute()
+        
+        # 해시태그 있는 데이터
+        with_hashtag = supabase.table('kstartup_complete')\
+            .select('id', count='exact')\
+            .neq('hash_tag', '')\
+            .execute()
+        
+        # 첨부파일 있는 데이터
+        with_attach = supabase.table('kstartup_complete')\
+            .select('id', count='exact')\
+            .neq('attachment_urls', '[]')\
+            .execute()
+        
+        # 품질 낮은 요약
+        poor_summary = supabase.table('kstartup_complete')\
+            .select('id', count='exact')\
+            .or_('bsns_sumry.like.%모집중%,bsns_sumry.like.%URL복사%')\
+            .execute()
+        
+        print('\n' + '='*50)
+        print('      K-STARTUP 데이터 품질 보고서')
+        print('='*50)
+        print('\n📊 전체 통계')
+        print('━' * 40)
+        print(f'전체 데이터: {total.count}개')
+        print(f'첨부파일 보유: {with_attach.count}개 ({with_attach.count/total.count*100:.1f}%)')
+        print(f'해시태그 보유: {with_hashtag.count}개 ({with_hashtag.count/total.count*100:.1f}%)')
+        
+        print('\n⚠️ 품질 문제')
+        print('━' * 40)
+        print(f'Unknown 확장자: {unknown.count}개')
+        print(f'품질 낮은 요약: {poor_summary.count}개')
+        
+        if unknown.count == 0:
+            print('\n✅ 모든 첨부파일 확장자가 정상입니다!')
+        else:
+            print(f'\n🔧 아직 {unknown.count}개의 unknown 파일이 남아있습니다.')
+        
+        print('\n' + '='*50)
+        print(f'보고서 생성: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        EOF
+        
+        python report.py
