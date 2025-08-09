@@ -29,13 +29,13 @@ jobs:
         echo "Starting K-Startup collection..."
         python scripts/kstartup_collector.py
     
-    - name: Run processor (Fast Version)
+    - name: Run processor (Fixed Version - 파일명 개선)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Processing attachments and hashtags (Fast Version)..."
-        python scripts/kstartup_complete_processor_fast.py
+        echo "Processing attachments with improved filename extraction..."
+        python scripts/kstartup_complete_processor_fixed.py
     
     - name: Generate Final Report
       if: always()
@@ -79,6 +79,19 @@ jobs:
             with_summary = supabase.table('kstartup_complete').select('id').not_.is_('bsns_sumry', 'null').execute()
             summary_count = len(with_summary.data) if with_summary.data else 0
             
+            # unknown 확장자 개수
+            all_attachments = supabase.table('kstartup_complete').select('attachment_urls').neq('attachment_urls', '[]').execute()
+            unknown_count = 0
+            proper_count = 0
+            if all_attachments.data:
+                for item in all_attachments.data:
+                    if item.get('attachment_urls'):
+                        for att in item['attachment_urls']:
+                            if att.get('safe_filename', '').endswith('.unknown'):
+                                unknown_count += 1
+                            else:
+                                proper_count += 1
+            
             # 최근 처리 데이터 5개
             recent = supabase.table('kstartup_complete').select(
                 'biz_pbanc_nm', 'pbanc_ntrp_nm', 'attachment_count', 'created_at'
@@ -94,6 +107,13 @@ jobs:
             print(f'오늘 업데이트: {updated_count}개')
             print(f'첨부파일 보유: {attach_count}개')
             print(f'요약 처리 완료: {summary_count}개')
+            
+            print('\n📎 첨부파일 품질')
+            print('━' * 40)
+            print(f'정상 파일명: {proper_count}개')
+            print(f'Unknown 확장자: {unknown_count}개')
+            if unknown_count > 0:
+                print(f'⚠️ 파일명 개선 필요: {unknown_count}개')
             
             if today_count > 0 or updated_count > 0:
                 print('\n✅ 오늘 처리 성공!')
