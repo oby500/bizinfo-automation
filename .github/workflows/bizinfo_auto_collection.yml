@@ -1,0 +1,96 @@
+name: Bizinfo Auto Collection
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 매일 오전 10시 (KST)
+  workflow_dispatch:
+
+jobs:
+  collect-bizinfo:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase pandas openpyxl
+    
+    - name: Step 1 - Excel Collection
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo " STEP 1: 기업마당 엑셀 데이터 수집"
+        echo "======================================"
+        python scripts/bizinfo_excel_collector.py
+      continue-on-error: true
+    
+    - name: Step 2 - Fast Attachment Crawling
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo " STEP 2: 고속 첨부파일 크롤링"
+        echo "======================================"
+        python scripts/bizinfo_attachment_crawler_fast.py
+      continue-on-error: true
+    
+    - name: Generate Report
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        python -c "
+import os
+from supabase import create_client
+from datetime import datetime
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_KEY') or os.environ.get('SUPABASE_SERVICE_KEY')
+supabase = create_client(url, key)
+
+# 전체 통계
+total = supabase.table('bizinfo_complete').select('id', count='exact').execute()
+print(f'📊 전체 데이터: {total.count}개')
+
+# 오늘 추가된 데이터
+today = datetime.now().strftime('%Y-%m-%d')
+today_data = supabase.table('bizinfo_complete').select('id', count='exact').gte('created_at', today).execute()
+print(f'📊 오늘 추가: {today_data.count}개')
+
+# 첨부파일 있는 데이터
+with_attach = supabase.table('bizinfo_complete').select('id', count='exact').not_.is_('attachment_urls', 'null').execute()
+print(f'📎 첨부파일 보유: {with_attach.count}개')
+
+# 첨부파일 비율
+if total.count > 0:
+    attach_rate = (with_attach.count / total.count) * 100
+    print(f'📈 첨부파일 비율: {attach_rate:.1f}%')
+
+# 최근 100개 데이터 품질 체크
+recent = supabase.table('bizinfo_complete').select('attachment_urls', 'bsns_sumry', 'hash_tag').order('created_at', desc=True).limit(100).execute()
+recent_with_attach = sum(1 for item in recent.data if item.get('attachment_urls') and item['attachment_urls'] != [])
+recent_good_summary = sum(1 for item in recent.data if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
+recent_with_hashtag = sum(1 for item in recent.data if item.get('hash_tag'))
+
+print(f'\n📌 최근 100개 데이터 품질:')
+print(f'  - 첨부파일: {recent_with_attach}개 ({recent_with_attach}%)')
+print(f'  - 정상 요약 (150자+): {recent_good_summary}개 ({recent_good_summary}%)')
+print(f'  - 해시태그: {recent_with_hashtag}개 ({recent_with_hashtag}%)')
+
+if recent_with_attach < 70:
+    print('  ⚠️ 경고: 첨부파일 수집률이 낮습니다!')
+if recent_good_summary < 70:
+    print('  ⚠️ 경고: 요약 품질이 낮습니다!')
+
+print('\n✅ 처리 완료!')
+        "
