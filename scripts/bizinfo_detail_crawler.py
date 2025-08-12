@@ -279,32 +279,28 @@ def main():
     print("   기업마당 상세페이지 크롤링 및 요약 생성")
     print("="*60)
     
-    # 처리 대상 조회 - bsns_sumry가 없거나 짧은 것
+    # 처리 대상 조회 - 요약이 짧은 것 (150자 미만)
     print("\n1. 처리 대상 조회 중...")
     
+    # 모든 데이터 조회 후 필터링
     response = supabase.table('bizinfo_complete')\
-        .select('id,pblanc_id,pblanc_nm,organ_nm,spnsr_organ_nm,reqst_begin_ymd,reqst_end_ymd,bsns_lclas_nm,bsns_mlsfc_nm,bsns_sumry')\
-        .or_('bsns_sumry.is.null,bsns_sumry.eq.')\
-        .execute()
-    
-    # 추가로 짧은 요약 (20자 미만) 조회
-    short_response = supabase.table('bizinfo_complete')\
         .select('id,pblanc_id,pblanc_nm,organ_nm,spnsr_organ_nm,reqst_begin_ymd,reqst_end_ymd,bsns_lclas_nm,bsns_mlsfc_nm,bsns_sumry')\
         .execute()
     
     items_to_process = []
     
-    # NULL이거나 빈 것 추가
+    # 요약이 짧은 것 필터링 (150자 미만)
     if response.data:
-        items_to_process.extend(response.data)
-    
-    # 짧은 요약 필터링하여 추가
-    if short_response.data:
-        for item in short_response.data:
+        for item in response.data:
             sumry = item.get('bsns_sumry', '')
-            if sumry and len(sumry) < 20:  # 20자 미만인 경우
-                if item not in items_to_process:  # 중복 방지
-                    items_to_process.append(item)
+            # NULL, 빈 값, 또는 150자 미만인 경우
+            if not sumry or len(sumry) < 150:
+                items_to_process.append(item)
+    
+    # 처리 개수 제한 (GitHub Actions 타임아웃 방지)
+    if len(items_to_process) > 500:
+        print(f"처리 대상이 {len(items_to_process)}개로 너무 많습니다. 500개로 제한합니다.")
+        items_to_process = items_to_process[:500]
     
     total_count = len(items_to_process)
     print(f"처리 대상: {total_count}개")
@@ -357,7 +353,7 @@ def main():
     if stats_response.data:
         total = len(stats_response.data)
         with_summary = sum(1 for item in stats_response.data 
-                          if item.get('bsns_sumry') and len(item['bsns_sumry']) > 50)
+                          if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
         
         print(f"\n📊 전체 통계:")
         print(f"   - 전체 레코드: {total}개")
