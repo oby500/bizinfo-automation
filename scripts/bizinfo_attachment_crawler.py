@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-기업마당 첨부파일 크롤러 - 전체 처리 + 속도 개선 버전
-멀티스레딩으로 처리 속도 향상
+기업마당 첨부파일 크롤러 - 미처리 데이터만 처리
+이미 처리된 데이터는 제외하고 실패한 것만 재처리
 """
 import os
 import sys
@@ -19,6 +19,7 @@ lock = threading.Lock()
 success_count = 0
 error_count = 0
 attachment_total = 0
+skip_count = 0
 
 def extract_file_type(text):
     """파일명에서 확장자 추측"""
@@ -42,7 +43,18 @@ def extract_file_type(text):
 
 def process_item(data, idx, total, supabase):
     """개별 항목 처리"""
-    global success_count, error_count, attachment_total
+    global success_count, error_count, attachment_total, skip_count
+    
+    # 이미 처리된 데이터 체크
+    current_summary = data.get('bsns_sumry', '')
+    current_attachments = data.get('attachment_urls')
+    
+    # 이미 충분히 처리된 경우 스킵
+    if current_summary and len(current_summary) >= 150 and current_attachments:
+        with lock:
+            skip_count += 1
+        print(f"[{idx}/{total}] ⏭️ 이미 처리 완료")
+        return False
     
     # 세션 생성 (스레드별로 독립적인 세션)
     session = requests.Session()
@@ -66,15 +78,33 @@ def process_item(data, idx, total, supabase):
             print(f"  [{idx}] ⚠️ 상세 URL 없음")
             return False
         
-        # 상세페이지 접속
-        response = session.get(dtl_url, timeout=10)
-        response.encoding = 'utf-8'
-        
-        if response.status_code != 200:
-            print(f"  [{idx}] ⚠️ HTTP {response.status_code}")
-            with lock:
-                error_count += 1
-            return False
+        # 재시도 로직 추가
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                # 상세페이지 접속
+                response = session.get(dtl_url, timeout=15)
+                response.encoding = 'utf-8'
+                
+                if response.status_code != 200:
+                    print(f"  [{idx}] ⚠️ HTTP {response.status_code}")
+                    if retry < max_retries - 1:
+                        time.sleep(2)
+                        continue
+                    with lock:
+                        error_count += 1
+                    return False
+                
+                break  # 성공하면 재시도 루프 종료
+            except requests.exceptions.RequestException as e:
+                if retry < max_retries - 1:
+                    print(f"  [{idx}] 재시도 {retry+1}/{max_retries-1}")
+                    time.sleep(3)
+                    continue
+                print(f"  [{idx}] ❌ 연결 실패: {str(e)[:30]}")
+                with lock:
+                    error_count += 1
+                return False
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -165,9 +195,7 @@ def process_item(data, idx, total, supabase):
                     content_parts.append(text[:1000])  # 더 긴 텍스트 추출
                     break
         
-        # 요약 생성/개선
-        current_summary = data.get('bsns_sumry', '')
-        
+        # 요약 생성/개선 - 현재 요약이 부족한 경우만
         if not current_summary or len(current_summary) < 150:
             summary_parts = []
             summary_parts.append(f"📋 {data['pblanc_nm']}")
@@ -195,10 +223,10 @@ def process_item(data, idx, total, supabase):
                 file_types = list(set([a['type'] for a in attachments]))
                 new_summary += f"\n📎 첨부: {', '.join(file_types)} ({len(attachments)}개)"
         
-        # DB 업데이트
+        # DB 업데이트 - 실제 변경사항이 있을 때만
         update_data = {}
         
-        if attachments:
+        if attachments and not current_attachments:
             update_data['attachment_urls'] = attachments
             with lock:
                 attachment_total += len(attachments)
@@ -216,7 +244,9 @@ def process_item(data, idx, total, supabase):
             print(f"  [{idx}] ✅ 성공 (첨부: {len(attachments)}개, 요약: {len(new_summary)}자)")
             return True
         else:
-            print(f"  [{idx}] ⏭️ 이미 처리됨")
+            with lock:
+                skip_count += 1
+            print(f"  [{idx}] ⏭️ 변경사항 없음")
             return False
         
     except Exception as e:
@@ -226,10 +256,10 @@ def process_item(data, idx, total, supabase):
         return False
 
 def main():
-    global success_count, error_count, attachment_total
+    global success_count, error_count, attachment_total, skip_count
     
     print("=" * 60)
-    print(" 기업마당 전체 크롤링 - 멀티스레딩 버전")
+    print(" 기업마당 미처리 데이터 크롤링")
     print("=" * 60)
     
     # Supabase 연결
@@ -242,7 +272,7 @@ def main():
     
     supabase = create_client(supabase_url, supabase_key)
     
-    # 처리 대상 조회 - 전체 데이터
+    # 처리 대상 조회 - 미처리 데이터만
     print("1. 처리 대상 조회 중...")
     try:
         # 전체 데이터 조회 (최대 5000개)
@@ -264,16 +294,22 @@ def main():
             if len(all_targets) >= 5000:  # 최대 5000개
                 break
         
-        # 처리 필요한 것만 필터링
+        # 미처리 데이터만 필터링
         targets = []
+        already_done = 0
         for item in all_targets:
             bsns_sumry = item.get('bsns_sumry', '')
             attachment_urls = item.get('attachment_urls')
             
+            # 요약이 부족하거나 첨부파일이 없는 경우만
             if (not bsns_sumry or len(bsns_sumry) < 150) or (not attachment_urls):
                 targets.append(item)
+            else:
+                already_done += 1
         
-        print(f"✅ 전체: {len(all_targets)}개 중 처리 대상: {len(targets)}개")
+        print(f"✅ 전체: {len(all_targets)}개")
+        print(f"✅ 이미 처리: {already_done}개")
+        print(f"✅ 처리 필요: {len(targets)}개")
         
     except Exception as e:
         print(f"❌ 데이터 조회 오류: {e}")
@@ -283,28 +319,29 @@ def main():
         print("처리할 데이터가 없습니다.")
         return
     
-    print("\n2. 멀티스레딩 크롤링 시작...")
-    print(f"   - 스레드 수: 10개")
-    print(f"   - 예상 시간: {len(targets) // 10 // 2}분")
+    print("\n2. 안정적인 크롤링 시작...")
+    print(f"   - 스레드 수: 5개 (안정성 우선)")
+    print(f"   - 재시도: 3회")
+    print(f"   - 예상 시간: {len(targets) // 5 // 2}분")
     print("-" * 60)
     
     start_time = time.time()
     
-    # 배치 처리 (100개씩)
-    batch_size = 100
+    # 배치 처리 (50개씩, 더 작은 배치)
+    batch_size = 50
     for batch_start in range(0, len(targets), batch_size):
         batch_end = min(batch_start + batch_size, len(targets))
         batch = targets[batch_start:batch_end]
         
         print(f"\n배치 처리: {batch_start+1}-{batch_end}/{len(targets)}")
         
-        # 멀티스레딩으로 처리
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        # 멀티스레딩으로 처리 (스레드 수 줄임)
+        with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             for i, data in enumerate(batch, batch_start + 1):
                 future = executor.submit(process_item, data, i, len(targets), supabase)
                 futures.append(future)
-                time.sleep(0.1)  # 요청 간격
+                time.sleep(0.2)  # 요청 간격 늘림
             
             # 결과 대기
             for future in as_completed(futures):
@@ -312,8 +349,8 @@ def main():
         
         # 배치 간 휴식
         if batch_end < len(targets):
-            print(f"배치 완료. 2초 대기...")
-            time.sleep(2)
+            print(f"배치 완료. 3초 대기...")
+            time.sleep(3)
     
     elapsed_time = time.time() - start_time
     
@@ -322,10 +359,12 @@ def main():
     print(" 크롤링 완료")
     print("=" * 60)
     print(f"✅ 성공: {success_count}개")
+    print(f"⏭️ 스킵: {skip_count}개 (이미 처리됨)")
     print(f"❌ 실패: {error_count}개")
     print(f"📎 첨부파일: {attachment_total}개")
     print(f"⏱️ 소요 시간: {elapsed_time:.1f}초 ({elapsed_time/60:.1f}분)")
-    print(f"📊 처리 속도: {len(targets)/elapsed_time:.1f}개/초")
+    if success_count > 0:
+        print(f"📊 처리 속도: {success_count/elapsed_time:.1f}개/초")
     print("=" * 60)
 
 if __name__ == "__main__":
