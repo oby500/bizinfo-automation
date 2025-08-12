@@ -58,30 +58,24 @@ def main():
         'Upgrade-Insecure-Requests': '1'
     })
     
-    # 처리 대상 조회 - attachment_urls가 없거나 비어있는 데이터
+    # 처리 대상 조회 - bsns_sumry가 짧거나 attachment_urls가 없는 데이터
     print("1. 처리 대상 조회 중...")
     try:
-        # attachment_urls가 null인 데이터 먼저 조회
+        # 전체 데이터 조회하여 필터링 (최대 2000개)
         response = supabase.table('bizinfo_complete').select(
             'id', 'pblanc_id', 'pblanc_nm', 'dtl_url', 'bsns_sumry', 'attachment_urls'
-        ).is_('attachment_urls', 'null').limit(100).execute()
+        ).order('created_at', desc=True).limit(2000).execute()
         
-        targets = response.data
-        
-        # 추가로 bsns_sumry가 짧은 것도 포함
-        if len(targets) < 100:
-            response2 = supabase.table('bizinfo_complete').select(
-                'id', 'pblanc_id', 'pblanc_nm', 'dtl_url', 'bsns_sumry', 'attachment_urls'
-            ).limit(500).execute()
+        targets = []
+        for item in response.data:
+            # 조건: bsns_sumry가 150자 미만이거나 attachment_urls가 없음
+            bsns_sumry = item.get('bsns_sumry', '')
+            attachment_urls = item.get('attachment_urls')
             
-            for item in response2.data:
-                # attachment_urls가 없거나 bsns_sumry가 150자 미만
-                if (not item.get('attachment_urls')) or \
-                   (item.get('bsns_sumry') and len(item.get('bsns_sumry', '')) < 150):
-                    if item['id'] not in [t['id'] for t in targets]:
-                        targets.append(item)
-                        if len(targets) >= 100:
-                            break
+            if (not bsns_sumry or len(bsns_sumry) < 150) or (not attachment_urls):
+                targets.append(item)
+                if len(targets) >= 500:  # 최대 500개 처리
+                    break
         
         print(f"✅ 처리 대상: {len(targets)}개")
         
@@ -203,13 +197,21 @@ def main():
                 # 상세 내용 추출 (요약 개선용)
                 content_parts = []
                 
-                # 본문 내용 찾기
-                content_areas = soup.find_all(['div', 'td'], class_=['view_cont', 'content', 'board_view'])
-                for area in content_areas:
-                    text = area.get_text(strip=True)
-                    if text and len(text) > 50:
-                        content_parts.append(text[:500])
-                        break
+                # 본문 내용 찾기 - 더 많은 선택자 추가
+                content_selectors = [
+                    'div.view_cont', 'div.content', 'div.board_view',
+                    'td.content', 'td.view_cont',
+                    'div.bbs_cont', 'div.board_content',
+                    'div#content', 'div.con_view'
+                ]
+                
+                for selector in content_selectors:
+                    content_area = soup.select_one(selector)
+                    if content_area:
+                        text = content_area.get_text(separator=' ', strip=True)
+                        if text and len(text) > 50:
+                            content_parts.append(text[:1000])  # 더 긴 텍스트 추출
+                            break
                 
                 # 요약 생성/개선
                 current_summary = data.get('bsns_sumry', '')
@@ -218,8 +220,16 @@ def main():
                     summary_parts = []
                     summary_parts.append(f"📋 {data['pblanc_nm']}")
                     
+                    # 본문 내용 더 자세히 포함
                     if content_parts:
-                        summary_parts.append(f"📝 {content_parts[0][:200]}...")
+                        # 공백 정리 및 주요 내용 추출
+                        content_text = ' '.join(content_parts[0].split())[:400]
+                        summary_parts.append(f"📝 {content_text}...")
+                    
+                    # 기간 정보 추출 시도
+                    date_info = soup.find(text=lambda t: '접수기간' in t or '신청기간' in t)
+                    if date_info:
+                        summary_parts.append(f"📅 {date_info.strip()}")
                     
                     if attachments:
                         file_types = list(set([a['type'] for a in attachments]))
@@ -258,7 +268,7 @@ def main():
                 error_count += 1
             
             # 요청 간격 (서버 부하 방지)
-            time.sleep(1)
+            time.sleep(0.5)  # 0.5초로 단축
             
         except Exception as e:
             error_count += 1
