@@ -61,13 +61,10 @@ def main():
     # 처리 대상 조회 - attachment_urls가 없거나 비어있는 데이터
     print("1. 처리 대상 조회 중...")
     try:
-        # attachment_urls가 null이거나 빈 배열인 데이터
+        # attachment_urls가 null인 데이터 먼저 조회
         response = supabase.table('bizinfo_complete').select(
             'id', 'pblanc_id', 'pblanc_nm', 'dtl_url', 'bsns_sumry', 'attachment_urls'
-        ).or_(
-            'attachment_urls.is.null',
-            'attachment_urls.eq.[]'
-        ).limit(100).execute()
+        ).is_('attachment_urls', 'null').limit(100).execute()
         
         targets = response.data
         
@@ -79,7 +76,7 @@ def main():
             
             for item in response2.data:
                 # attachment_urls가 없거나 bsns_sumry가 150자 미만
-                if (not item.get('attachment_urls') or item.get('attachment_urls') == []) or \
+                if (not item.get('attachment_urls')) or \
                    (item.get('bsns_sumry') and len(item.get('bsns_sumry', '')) < 150):
                     if item['id'] not in [t['id'] for t in targets]:
                         targets.append(item)
