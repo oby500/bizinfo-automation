@@ -20,7 +20,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install requests beautifulsoup4 supabase pandas openpyxl
+        pip install requests beautifulsoup4 supabase pandas openpyxl selenium webdriver-manager
     
     - name: Step 1 - Excel Collection
       env:
@@ -33,13 +33,24 @@ jobs:
         python scripts/bizinfo_excel_collector.py
       continue-on-error: true
     
-    - name: Step 2 - Fast Attachment Crawling
+    - name: Step 2 - Detail Page Crawling
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo " STEP 2: 고속 첨부파일 크롤링"
+        echo " STEP 2: 상세페이지 크롤링"
+        echo "======================================"
+        python scripts/bizinfo_detail_crawler.py
+      continue-on-error: true
+    
+    - name: Step 3 - Fast Attachment Crawling
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo " STEP 3: 고속 첨부파일 크롤링"
         echo "======================================"
         python scripts/bizinfo_attachment_crawler_fast.py
       continue-on-error: true
@@ -63,34 +74,4 @@ total = supabase.table('bizinfo_complete').select('id', count='exact').execute()
 print(f'📊 전체 데이터: {total.count}개')
 
 # 오늘 추가된 데이터
-today = datetime.now().strftime('%Y-%m-%d')
-today_data = supabase.table('bizinfo_complete').select('id', count='exact').gte('created_at', today).execute()
-print(f'📊 오늘 추가: {today_data.count}개')
-
-# 첨부파일 있는 데이터
-with_attach = supabase.table('bizinfo_complete').select('id', count='exact').not_.is_('attachment_urls', 'null').execute()
-print(f'📎 첨부파일 보유: {with_attach.count}개')
-
-# 첨부파일 비율
-if total.count > 0:
-    attach_rate = (with_attach.count / total.count) * 100
-    print(f'📈 첨부파일 비율: {attach_rate:.1f}%')
-
-# 최근 100개 데이터 품질 체크
-recent = supabase.table('bizinfo_complete').select('attachment_urls', 'bsns_sumry', 'hash_tag').order('created_at', desc=True).limit(100).execute()
-recent_with_attach = sum(1 for item in recent.data if item.get('attachment_urls') and item['attachment_urls'] != [])
-recent_good_summary = sum(1 for item in recent.data if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
-recent_with_hashtag = sum(1 for item in recent.data if item.get('hash_tag'))
-
-print(f'\n📌 최근 100개 데이터 품질:')
-print(f'  - 첨부파일: {recent_with_attach}개 ({recent_with_attach}%)')
-print(f'  - 정상 요약 (150자+): {recent_good_summary}개 ({recent_good_summary}%)')
-print(f'  - 해시태그: {recent_with_hashtag}개 ({recent_with_hashtag}%)')
-
-if recent_with_attach < 70:
-    print('  ⚠️ 경고: 첨부파일 수집률이 낮습니다!')
-if recent_good_summary < 70:
-    print('  ⚠️ 경고: 요약 품질이 낮습니다!')
-
-print('\n✅ 처리 완료!')
-        "
+today = datetime.now().str
