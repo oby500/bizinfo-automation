@@ -38,24 +38,17 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Step 2 - Detail Page Crawling
+    - name: Step 2 - Detail Page Crawling with Selenium
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      continue-on-error: true  # 실패해도 다음 단계 진행
       run: |
         echo "======================================"
-        echo "  STEP 2: 상세페이지 크롤링 및 요약 생성"
+        echo "  STEP 2: Selenium 상세페이지 크롤링"
         echo "======================================"
-        echo "dtl_url을 사용하여 상세페이지 크롤링..."
-        python scripts/bizinfo_detail_crawler.py || echo "기본 크롤러 실패"
-        
-        # 실패 시 Selenium 버전 시도
-        if [ $? -ne 0 ]; then
-          echo "Selenium 버전으로 재시도..."
-          python scripts/bizinfo_detail_crawler_selenium.py || echo "Selenium 크롤러도 실패"
-        fi
+        echo "Selenium으로 직접 크롤링 시작..."
+        python scripts/bizinfo_detail_crawler_selenium.py
     
     - name: Step 3 - Attachment Processing
       env:
@@ -95,11 +88,11 @@ jobs:
             
             # 오늘 추가된 데이터
             today = datetime.now().date().isoformat()
-            today_new = supabase.table('bizinfo_complete').select('id').gte('regist_dt', today).execute()
+            today_new = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
             
             # 정상 요약 보유 데이터 (200자 이상)
-            all_data = supabase.table('bizinfo_complete').select('id,bsns_sumry').execute()
+            all_data = supabase.table('bizinfo_complete').select('id,bsns_sumry').limit(1000).execute()
             if all_data.data:
                 with_summary = sum(1 for item in all_data.data 
                                  if item.get('bsns_sumry') and len(item['bsns_sumry']) > 200)
@@ -107,30 +100,40 @@ jobs:
                 with_summary = 0
             
             # 첨부파일 보유 데이터
-            with_attach = supabase.table('bizinfo_complete').select('id').neq('attachment_urls', '[]').execute()
-            attach_count = len(with_attach.data) if with_attach.data else 0
+            with_attach = supabase.table('bizinfo_complete').select('id,attachment_urls').limit(1000).execute()
+            attach_count = sum(1 for item in with_attach.data 
+                             if item.get('attachment_urls') and item['attachment_urls'] != [])
             
             print('\n' + '='*60)
             print('      🏢 기업마당 처리 결과 보고서')
             print('='*60)
             print(f'📊 전체 데이터: {total_count}개')
             print(f'📊 오늘 신규 추가: {today_count}개')
-            print(f'📊 정상 요약 보유: {with_summary}개 ({with_summary*100/total_count:.1f}%)')
-            print(f'📊 첨부파일 보유: {attach_count}개 ({attach_count*100/total_count:.1f}%)')
+            print(f'📊 정상 요약 보유 (샘플 1000개): {with_summary}개 ({with_summary*100/min(1000, total_count):.1f}%)')
+            print(f'📊 첨부파일 보유 (샘플 1000개): {attach_count}개 ({attach_count*100/min(1000, total_count):.1f}%)')
             
             # 최근 데이터 상태 점검
-            recent = supabase.table('bizinfo_complete').select('id,attachment_urls').gte('regist_dt', '2025-08-11').execute()
+            recent = supabase.table('bizinfo_complete').select('id,attachment_urls,created_at').order('created_at', desc=True).limit(100).execute()
             if recent.data:
                 recent_with_attach = sum(1 for item in recent.data 
                                        if item.get('attachment_urls') and item['attachment_urls'] != [])
-                print(f'\n📌 최근 2일 데이터 ({len(recent.data)}개):')
+                print(f'\n📌 최근 100개 데이터:')
                 print(f'   - 첨부파일 보유: {recent_with_attach}개')
                 if recent_with_attach == 0:
                     print('   ⚠️ 경고: 최근 데이터에 첨부파일이 없습니다!')
             
+            # Selenium 처리 확인
+            selenium_check = supabase.table('bizinfo_complete').select('attachment_processing_status').limit(100).execute()
+            if selenium_check.data:
+                selenium_processed = sum(1 for item in selenium_check.data 
+                                       if item.get('attachment_processing_status') and 
+                                       'selenium' in str(item['attachment_processing_status']))
+                if selenium_processed > 0:
+                    print(f'\n🤖 Selenium 처리: {selenium_processed}개')
+            
             # 품질 체크
-            quality_score = (with_summary / total_count * 100) if total_count > 0 else 0
-            attach_score = (attach_count / total_count * 100) if total_count > 0 else 0
+            quality_score = (with_summary / min(1000, total_count) * 100) if total_count > 0 else 0
+            attach_score = (attach_count / min(1000, total_count) * 100) if total_count > 0 else 0
             
             print('\n📈 품질 평가:')
             if quality_score >= 90:
