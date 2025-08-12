@@ -1,4 +1,4 @@
-name: Bizinfo Auto Collection
+name: 🏢 Bizinfo Complete Workflow
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   collect:
-    name: 기업마당 자동 처리
+    name: 기업마당 완전 자동 처리
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -27,22 +27,37 @@ jobs:
         pip install selenium webdriver-manager pandas openpyxl
         pip install requests beautifulsoup4 supabase
     
-    - name: Run Bizinfo Collection
+    - name: Step 1 - Excel Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Starting Bizinfo collection..."
+        echo "======================================"
+        echo "  STEP 1: 기업마당 엑셀 데이터 수집"
+        echo "======================================"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Run processor (Fast Version)
+    - name: Step 2 - Detail Page Crawling
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
-        echo "Processing attachments and hashtags (Fast Version)..."
+        echo "======================================"
+        echo "  STEP 2: 상세페이지 크롤링 및 요약 생성"
+        echo "======================================"
+        python scripts/bizinfo_detail_crawler.py
+    
+    - name: Step 3 - Attachment Processing
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo "  STEP 3: 첨부파일 정리"
+        echo "======================================"
         python scripts/bizinfo_complete_processor_fast.py
     
     - name: Generate Final Report
@@ -72,26 +87,45 @@ jobs:
             
             # 오늘 추가된 데이터
             today = datetime.now().date().isoformat()
-            today_new = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
+            today_new = supabase.table('bizinfo_complete').select('id').gte('regist_dt', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
+            
+            # 정상 요약 보유 데이터
+            all_data = supabase.table('bizinfo_complete').select('id,bsns_sumry').execute()
+            if all_data.data:
+                with_summary = sum(1 for item in all_data.data 
+                                 if item.get('bsns_sumry') and len(item['bsns_sumry']) > 50)
+            else:
+                with_summary = 0
             
             # 첨부파일 보유 데이터
             with_attach = supabase.table('bizinfo_complete').select('id').neq('attachment_urls', '[]').execute()
             attach_count = len(with_attach.data) if with_attach.data else 0
             
-            print('\n' + '='*50)
-            print('      기업마당 처리 결과 보고서')
-            print('='*50)
+            print('\n' + '='*60)
+            print('      🏢 기업마당 처리 결과 보고서')
+            print('='*60)
             print(f'📊 전체 데이터: {total_count}개')
             print(f'📊 오늘 신규 추가: {today_count}개')
+            print(f'📊 정상 요약 보유: {with_summary}개 ({with_summary*100/total_count:.1f}%)')
             print(f'📊 첨부파일 보유: {attach_count}개')
             
-            if today_count > 0:
-                print('\n✅ 오늘 처리 성공!')
-            else:
-                print('\n⚠️ 오늘 새로운 데이터가 없습니다')
+            # 품질 체크
+            quality_score = (with_summary / total_count * 100) if total_count > 0 else 0
             
-            print('='*50)
+            if quality_score >= 90:
+                print('\n✅ 데이터 품질: 우수 (90% 이상)')
+            elif quality_score >= 70:
+                print('\n⚠️ 데이터 품질: 보통 (70-90%)')
+            else:
+                print('\n❌ 데이터 품질: 개선 필요 (70% 미만)')
+            
+            if today_count > 0:
+                print(f'✅ 오늘 {today_count}개 처리 성공!')
+            else:
+                print('⚠️ 오늘 새로운 데이터가 없습니다')
+            
+            print('='*60)
             
         except Exception as e:
             print(f"보고서 생성 중 오류: {e}")
