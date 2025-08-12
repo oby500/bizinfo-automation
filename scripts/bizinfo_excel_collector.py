@@ -9,6 +9,61 @@ import time
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
+def calculate_d_day(end_date_str):
+    """D-day 계산"""
+    try:
+        if not end_date_str or end_date_str == 'nan':
+            return ""
+        
+        if isinstance(end_date_str, str):
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+        else:
+            end_date = pd.to_datetime(end_date_str)
+            
+        today = datetime.now()
+        diff = (end_date - today).days
+        
+        if diff < 0:
+            return "마감"
+        elif diff == 0:
+            return "🚨 오늘마감"
+        elif diff <= 3:
+            return f"🚨 마감임박 D-{diff}"
+        elif diff <= 7:
+            return f"⏰ D-{diff}"
+        else:
+            return f"📆 D-{diff}"
+    except:
+        return ""
+
+def create_basic_summary(row):
+    """기본 요약 생성 (상세 크롤링 전 임시)"""
+    parts = []
+    
+    # 제목
+    title = str(row.get('공고명', ''))
+    if title and title != 'nan':
+        parts.append(f"📋 {title}")
+    
+    # 주관기관
+    organ = str(row.get('소관부처', ''))
+    if organ and organ != 'nan':
+        parts.append(f"🏢 주관: {organ}")
+    
+    # 기간
+    start_date = str(row.get('신청시작일자', ''))
+    end_date = str(row.get('신청종료일자', ''))
+    
+    if start_date != 'nan' and end_date != 'nan':
+        parts.append(f"📅 기간: {start_date} ~ {end_date}")
+        
+        # D-day
+        d_day = calculate_d_day(end_date)
+        if d_day:
+            parts.append(d_day)
+    
+    return '\n'.join(parts) if parts else ""
+
 def main():
     print(f"[{datetime.now()}] 기업마당 자동 수집 시작")
     
@@ -72,7 +127,7 @@ def main():
         # 컬럼명 확인
         print(f"컬럼: {df.columns.tolist()}")
         
-        # 5. 기존 pblanc_id 목록 전체 조회 (limit 없이!)
+        # 5. 기존 pblanc_id 목록 전체 조회
         print("기존 데이터 확인 중...")
         existing_ids = set()
         offset = 0
@@ -107,14 +162,14 @@ def main():
                 if not pblanc_id:
                     pblanc_id = f"PBLN_{datetime.now().strftime('%Y%m%d')}_{idx:04d}"
                 
-                # 중복 체크 (메모리에서!)
+                # 중복 체크
                 if pblanc_id in existing_ids:
                     duplicate_count += 1
                     if duplicate_count <= 10:  # 처음 10개만 출력
                         print(f"  [{idx+1}/{len(df)}] ⏭️ 중복: {row.get('공고명', '')[:30]}...")
                     continue
                 
-                # 신청기간 처리 - nan 체크
+                # 신청기간 처리
                 start_date = str(row.get('신청시작일자', ''))
                 end_date = str(row.get('신청종료일자', ''))
                 
@@ -124,7 +179,10 @@ def main():
                 if end_date == 'nan' or pd.isna(row.get('신청종료일자')):
                     end_date = None
                 
-                # 신규 레코드 생성
+                # 기본 요약 생성
+                basic_summary = create_basic_summary(row)
+                
+                # 신규 레코드 생성 (중요: 초기값 설정!)
                 record = {
                     'pblanc_id': pblanc_id,
                     'pblanc_nm': str(row.get('공고명', '')),
@@ -136,7 +194,14 @@ def main():
                     'dtl_url': dtl_url,
                     'regist_dt': str(row.get('등록일자', '')),
                     'src_system_nm': 'github_actions',
-                    'created_at': datetime.now().isoformat()
+                    'created_at': datetime.now().isoformat(),
+                    # === 중요: 초기값 설정 ===
+                    'attachment_urls': [],  # 빈 배열로 초기화
+                    'bsns_sumry': basic_summary,  # 기본 요약 설정
+                    'attachment_processing_status': {
+                        'processed': False,
+                        'message': '상세 크롤링 대기중'
+                    }
                 }
                 
                 new_records.append(record)
@@ -146,7 +211,7 @@ def main():
                 print(f"  [{idx+1}/{len(df)}] ❌ 오류: {e}")
                 continue
         
-        # 7. 배치 삽입 (개별 삽입으로 변경 - 중복 오류 방지)
+        # 7. 배치 삽입
         success_count = 0
         if new_records:
             print(f"\n개별 저장 중... ({len(new_records)}개)")
