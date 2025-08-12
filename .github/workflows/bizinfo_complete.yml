@@ -32,17 +32,17 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Step 2 - Fast Attachment Crawler (HTTP)
+    - name: Step 2 - Attachment & Summary Crawler (Aug 8 Version)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: 고속 첨부파일 크롤링 (HTTP)"
+        echo "  STEP 2: 상세페이지 크롤링 (8월 8일 버전)"
         echo "======================================"
-        echo "멀티스레딩 10개로 고속 처리..."
-        python scripts/bizinfo_attachment_crawler_fast.py
+        echo "첨부파일 + 요약 생성..."
+        python scripts/bizinfo_attachment_crawler.py
     
     - name: Step 3 - Attachment Processing
       env:
@@ -140,11 +140,11 @@ jobs:
             else:
                 print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
             
-            # 처리 속도 정보
-            print('\n⚡ 처리 성능:')
-            print('  - 멀티스레딩: 10개 동시 처리')
-            print('  - 예상 속도: 5-10개/초')
-            print('  - 2,400개 예상 시간: 4-8분')
+            # 8월 8일 버전 사용 알림
+            print('\n🔧 처리 방식:')
+            print('  - 8월 8일 정상 작동 버전 사용')
+            print('  - HTTP 크롤링 + BeautifulSoup')
+            print('  - 상세페이지 요약 생성 포함')
             
             if today_count > 0:
                 print(f'\n✅ 오늘 {today_count}개 처리 성공!')
