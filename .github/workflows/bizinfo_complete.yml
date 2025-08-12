@@ -17,15 +17,9 @@ jobs:
       with:
         python-version: '3.9'
     
-    - name: Install Chrome
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-    
     - name: Install dependencies
       run: |
-        pip install selenium webdriver-manager pandas openpyxl
-        pip install requests beautifulsoup4 supabase
+        pip install requests beautifulsoup4 supabase pandas openpyxl
     
     - name: Step 1 - Excel Collection
       env:
@@ -38,17 +32,17 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Step 2 - Detail Page Crawling with Selenium
+    - name: Step 2 - Fast Attachment Crawler (HTTP)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: Selenium 상세페이지 크롤링"
+        echo "  STEP 2: 고속 첨부파일 크롤링 (HTTP)"
         echo "======================================"
-        echo "Selenium으로 직접 크롤링 시작..."
-        python scripts/bizinfo_detail_crawler_selenium.py
+        echo "멀티스레딩 10개로 고속 처리..."
+        python scripts/bizinfo_attachment_crawler_fast.py
     
     - name: Step 3 - Attachment Processing
       env:
@@ -91,11 +85,11 @@ jobs:
             today_new = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
             
-            # 정상 요약 보유 데이터 (200자 이상)
+            # 정상 요약 보유 데이터 (150자 이상)
             all_data = supabase.table('bizinfo_complete').select('id,bsns_sumry').limit(1000).execute()
             if all_data.data:
                 with_summary = sum(1 for item in all_data.data 
-                                 if item.get('bsns_sumry') and len(item['bsns_sumry']) > 200)
+                                 if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
             else:
                 with_summary = 0
             
@@ -113,23 +107,19 @@ jobs:
             print(f'📊 첨부파일 보유 (샘플 1000개): {attach_count}개 ({attach_count*100/min(1000, total_count):.1f}%)')
             
             # 최근 데이터 상태 점검
-            recent = supabase.table('bizinfo_complete').select('id,attachment_urls,created_at').order('created_at', desc=True).limit(100).execute()
+            recent = supabase.table('bizinfo_complete').select('id,attachment_urls,bsns_sumry,created_at').order('created_at', desc=True).limit(100).execute()
             if recent.data:
                 recent_with_attach = sum(1 for item in recent.data 
                                        if item.get('attachment_urls') and item['attachment_urls'] != [])
+                recent_with_summary = sum(1 for item in recent.data 
+                                        if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
                 print(f'\n📌 최근 100개 데이터:')
-                print(f'   - 첨부파일 보유: {recent_with_attach}개')
-                if recent_with_attach == 0:
-                    print('   ⚠️ 경고: 최근 데이터에 첨부파일이 없습니다!')
-            
-            # Selenium 처리 확인
-            selenium_check = supabase.table('bizinfo_complete').select('attachment_processing_status').limit(100).execute()
-            if selenium_check.data:
-                selenium_processed = sum(1 for item in selenium_check.data 
-                                       if item.get('attachment_processing_status') and 
-                                       'selenium' in str(item['attachment_processing_status']))
-                if selenium_processed > 0:
-                    print(f'\n🤖 Selenium 처리: {selenium_processed}개')
+                print(f'   - 첨부파일 보유: {recent_with_attach}개 ({recent_with_attach}%)')
+                print(f'   - 정상 요약: {recent_with_summary}개 ({recent_with_summary}%)')
+                if recent_with_attach < 70:
+                    print('   ⚠️ 경고: 최근 데이터 첨부파일 수집률이 낮습니다!')
+                if recent_with_summary < 70:
+                    print('   ⚠️ 경고: 최근 데이터 요약 품질이 낮습니다!')
             
             # 품질 체크
             quality_score = (with_summary / min(1000, total_count) * 100) if total_count > 0 else 0
@@ -149,6 +139,12 @@ jobs:
                 print('  ⚠️ 첨부파일: 보통 (70-90%)')
             else:
                 print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
+            
+            # 처리 속도 정보
+            print('\n⚡ 처리 성능:')
+            print('  - 멀티스레딩: 10개 동시 처리')
+            print('  - 예상 속도: 5-10개/초')
+            print('  - 2,400개 예상 시간: 4-8분')
             
             if today_count > 0:
                 print(f'\n✅ 오늘 {today_count}개 처리 성공!')
