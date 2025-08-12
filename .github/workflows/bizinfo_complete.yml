@@ -38,16 +38,16 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Step 2 - Detail Page Crawling
+    - name: Step 2 - Detail Page Crawling (Selenium)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: 상세페이지 크롤링 및 요약 생성"
+        echo "  STEP 2: 상세페이지 크롤링 (Selenium)"
         echo "======================================"
-        python scripts/bizinfo_detail_crawler.py
+        python scripts/bizinfo_detail_crawler_selenium.py
     
     - name: Step 3 - Attachment Processing
       env:
@@ -90,11 +90,11 @@ jobs:
             today_new = supabase.table('bizinfo_complete').select('id').gte('regist_dt', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
             
-            # 정상 요약 보유 데이터
+            # 정상 요약 보유 데이터 (200자 이상)
             all_data = supabase.table('bizinfo_complete').select('id,bsns_sumry').execute()
             if all_data.data:
                 with_summary = sum(1 for item in all_data.data 
-                                 if item.get('bsns_sumry') and len(item['bsns_sumry']) > 50)
+                                 if item.get('bsns_sumry') and len(item['bsns_sumry']) > 200)
             else:
                 with_summary = 0
             
@@ -108,22 +108,31 @@ jobs:
             print(f'📊 전체 데이터: {total_count}개')
             print(f'📊 오늘 신규 추가: {today_count}개')
             print(f'📊 정상 요약 보유: {with_summary}개 ({with_summary*100/total_count:.1f}%)')
-            print(f'📊 첨부파일 보유: {attach_count}개')
+            print(f'📊 첨부파일 보유: {attach_count}개 ({attach_count*100/total_count:.1f}%)')
             
             # 품질 체크
             quality_score = (with_summary / total_count * 100) if total_count > 0 else 0
+            attach_score = (attach_count / total_count * 100) if total_count > 0 else 0
             
+            print('\n📈 품질 평가:')
             if quality_score >= 90:
-                print('\n✅ 데이터 품질: 우수 (90% 이상)')
+                print('  ✅ 요약 품질: 우수 (90% 이상)')
             elif quality_score >= 70:
-                print('\n⚠️ 데이터 품질: 보통 (70-90%)')
+                print('  ⚠️ 요약 품질: 보통 (70-90%)')
             else:
-                print('\n❌ 데이터 품질: 개선 필요 (70% 미만)')
+                print('  ❌ 요약 품질: 개선 필요 (70% 미만)')
+            
+            if attach_score >= 90:
+                print('  ✅ 첨부파일: 우수 (90% 이상)')
+            elif attach_score >= 70:
+                print('  ⚠️ 첨부파일: 보통 (70-90%)')
+            else:
+                print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
             
             if today_count > 0:
-                print(f'✅ 오늘 {today_count}개 처리 성공!')
+                print(f'\n✅ 오늘 {today_count}개 처리 성공!')
             else:
-                print('⚠️ 오늘 새로운 데이터가 없습니다')
+                print('\n⚠️ 오늘 새로운 데이터가 없습니다')
             
             print('='*60)
             
