@@ -18,9 +18,15 @@ jobs:
       with:
         python-version: '3.9'
     
+    - name: Install Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
     - name: Install dependencies
       run: |
-        pip install requests beautifulsoup4 supabase pandas openpyxl selenium webdriver-manager
+        pip install requests beautifulsoup4 supabase pandas openpyxl
+        pip install selenium webdriver-manager
     
     - name: Step 1 - Excel Collection
       env:
@@ -33,45 +39,17 @@ jobs:
         python scripts/bizinfo_excel_collector.py
       continue-on-error: true
     
-    - name: Step 2 - Detail Page Crawling
+    - name: Step 2 - Detail Page Crawling with Selenium
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo " STEP 2: 상세페이지 크롤링"
+        echo " STEP 2: Selenium 상세페이지 크롤링"
         echo "======================================"
-        python scripts/bizinfo_detail_crawler.py
+        python scripts/bizinfo_detail_crawler_selenium.py
       continue-on-error: true
     
     - name: Step 3 - Fast Attachment Crawling
       env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      run: |
-        echo "======================================"
-        echo " STEP 3: 고속 첨부파일 크롤링"
-        echo "======================================"
-        python scripts/bizinfo_attachment_crawler_fast.py
-      continue-on-error: true
-    
-    - name: Generate Report
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      run: |
-        python -c "
-import os
-from supabase import create_client
-from datetime import datetime
-
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY') or os.environ.get('SUPABASE_SERVICE_KEY')
-supabase = create_client(url, key)
-
-# 전체 통계
-total = supabase.table('bizinfo_complete').select('id', count='exact').execute()
-print(f'📊 전체 데이터: {total.count}개')
-
-# 오늘 추가된 데이터
-today = datetime.now().str
+        SUPABASE_URL:
