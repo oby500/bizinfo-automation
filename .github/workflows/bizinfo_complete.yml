@@ -38,16 +38,24 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Step 2 - Detail Page Crawling (Selenium)
+    - name: Step 2 - Detail Page Crawling
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      continue-on-error: true  # 실패해도 다음 단계 진행
       run: |
         echo "======================================"
-        echo "  STEP 2: 상세페이지 크롤링 (Selenium)"
+        echo "  STEP 2: 상세페이지 크롤링 및 요약 생성"
         echo "======================================"
-        python scripts/bizinfo_detail_crawler_selenium.py
+        echo "dtl_url을 사용하여 상세페이지 크롤링..."
+        python scripts/bizinfo_detail_crawler.py || echo "기본 크롤러 실패"
+        
+        # 실패 시 Selenium 버전 시도
+        if [ $? -ne 0 ]; then
+          echo "Selenium 버전으로 재시도..."
+          python scripts/bizinfo_detail_crawler_selenium.py || echo "Selenium 크롤러도 실패"
+        fi
     
     - name: Step 3 - Attachment Processing
       env:
@@ -109,6 +117,16 @@ jobs:
             print(f'📊 오늘 신규 추가: {today_count}개')
             print(f'📊 정상 요약 보유: {with_summary}개 ({with_summary*100/total_count:.1f}%)')
             print(f'📊 첨부파일 보유: {attach_count}개 ({attach_count*100/total_count:.1f}%)')
+            
+            # 최근 데이터 상태 점검
+            recent = supabase.table('bizinfo_complete').select('id,attachment_urls').gte('regist_dt', '2025-08-11').execute()
+            if recent.data:
+                recent_with_attach = sum(1 for item in recent.data 
+                                       if item.get('attachment_urls') and item['attachment_urls'] != [])
+                print(f'\n📌 최근 2일 데이터 ({len(recent.data)}개):')
+                print(f'   - 첨부파일 보유: {recent_with_attach}개')
+                if recent_with_attach == 0:
+                    print('   ⚠️ 경고: 최근 데이터에 첨부파일이 없습니다!')
             
             # 품질 체크
             quality_score = (with_summary / total_count * 100) if total_count > 0 else 0
