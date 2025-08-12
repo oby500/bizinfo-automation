@@ -20,6 +20,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install requests beautifulsoup4 supabase pandas openpyxl
+        pip install selenium webdriver-manager
     
     - name: Step 1 - Excel Collection
       env:
