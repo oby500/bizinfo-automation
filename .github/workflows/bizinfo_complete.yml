@@ -2,6 +2,15 @@ name: 🏢 Bizinfo Complete Workflow
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: '수집 모드'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+        - daily    # 최근 7일 데이터만 (빠른 처리)
+        - full     # 전체 데이터 처리 (완전 점검)
   schedule:
     - cron: '0 8 * * 1-5'  # 평일 오후 5시 (KST)
 
@@ -22,6 +31,17 @@ jobs:
         pip install requests beautifulsoup4 supabase pandas openpyxl
         pip install selenium webdriver-manager
     
+    - name: Determine Mode
+      id: mode
+      run: |
+        if [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "mode=daily" >> $GITHUB_OUTPUT
+          echo "📅 스케줄 실행: daily 모드"
+        else
+          echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT
+          echo "🎯 수동 실행: ${{ github.event.inputs.mode || 'daily' }} 모드"
+        fi
+    
     - name: Step 1 - Excel Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -31,18 +51,136 @@ jobs:
         echo "======================================"
         echo "  STEP 1: 기업마당 엑셀 데이터 수집"
         echo "======================================"
+        echo "🔍 모드: ${{ steps.mode.outputs.mode }}"
         python scripts/bizinfo_excel_collector.py
     
-    - name: Step 2 - Attachment & Summary Crawler (Aug 8 Version)
+    - name: Step 2 - Daily Mode Crawler
+      if: steps.mode.outputs.mode == 'daily'
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: 상세페이지 크롤링 (8월 8일 버전)"
+        echo "  STEP 2: Daily 모드 - 최근 데이터만 처리"
         echo "======================================"
-        echo "첨부파일 + 요약 생성..."
+        echo "최근 7일 이내 데이터 중 요약/첨부파일 누락된 항목만 처리..."
+        
+        # Daily 모드: 최근 7일 + 품질 미달 데이터만 처리
+        cat << 'EOF' > daily_crawler.py
+        import os
+        import sys
+        import requests
+        from bs4 import BeautifulSoup
+        from supabase import create_client
+        from datetime import datetime, timedelta
+        import time
+        import threading
+        from queue import Queue
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        # Supabase 설정
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+        
+        if not url or not key:
+            print("환경변수 오류")
+            exit(1)
+            
+        supabase = create_client(url, key)
+        
+        # 7일 전 날짜
+        seven_days_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        
+        print("📅 Daily 모드: 최근 7일 데이터 처리")
+        print(f"기준 날짜: {seven_days_ago}")
+        
+        # 최근 7일 이내 데이터 중 요약이 부실하거나 첨부파일이 없는 것
+        response = supabase.table('bizinfo_complete').select('*').gte('created_at', seven_days_ago).execute()
+        
+        to_process = []
+        for item in response.data:
+            # 요약이 150자 미만이거나 첨부파일이 없으면 처리 대상
+            if not item.get('bsns_sumry') or len(item.get('bsns_sumry', '')) < 150 or not item.get('attachment_urls'):
+                to_process.append(item)
+        
+        print(f"처리 대상: {len(to_process)}개")
+        
+        if len(to_process) == 0:
+            print("✅ 모든 최근 데이터가 정상입니다.")
+            exit(0)
+        
+        # 여기서부터는 bizinfo_attachment_crawler.py 로직 활용
+        def process_item(item):
+            try:
+                dtl_url = item.get('dtl_url')
+                if not dtl_url:
+                    return None
+                    
+                response = requests.get(dtl_url, timeout=10)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 요약 추출
+                summary_parts = []
+                for row in soup.select('table tbody tr'):
+                    th = row.select_one('th')
+                    td = row.select_one('td')
+                    if th and td:
+                        label = th.get_text(strip=True)
+                        value = td.get_text(strip=True)
+                        if value and value != '-':
+                            summary_parts.append(f"{label}: {value}")
+                
+                summary = ' | '.join(summary_parts[:10]) if summary_parts else None
+                
+                # 첨부파일 추출
+                attachment_urls = []
+                for link in soup.select('a[href*="atchFileId"]'):
+                    href = link.get('href', '')
+                    if 'atchFileId' in href and 'fileSn' in href:
+                        file_url = f"https://www.bizinfo.go.kr{href}" if href.startswith('/') else href
+                        attachment_urls.append(file_url)
+                
+                # 업데이트
+                if summary or attachment_urls:
+                    update_data = {}
+                    if summary and len(summary) > 150:
+                        update_data['bsns_sumry'] = summary
+                    if attachment_urls:
+                        update_data['attachment_urls'] = attachment_urls
+                    
+                    if update_data:
+                        supabase.table('bizinfo_complete').update(update_data).eq('id', item['id']).execute()
+                        return True
+                        
+            except Exception as e:
+                print(f"오류 {item['id']}: {e}")
+                return False
+        
+        # 멀티스레딩으로 처리
+        success_count = 0
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(process_item, item) for item in to_process]
+            for future in as_completed(futures):
+                if future.result():
+                    success_count += 1
+        
+        print(f"✅ 처리 완료: {success_count}/{len(to_process)}개")
+        EOF
+        
+        python daily_crawler.py
+    
+    - name: Step 2 - Full Mode Crawler  
+      if: steps.mode.outputs.mode == 'full'
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo "  STEP 2: Full 모드 - 전체 데이터 처리"
+        echo "======================================"
+        echo "모든 데이터 점검 및 누락된 요약/첨부파일 복구..."
         python scripts/bizinfo_attachment_crawler.py
     
     - name: Step 3 - Attachment Processing
@@ -76,6 +214,9 @@ jobs:
             
         supabase = create_client(url, key)
         
+        # 실행 모드 확인
+        mode = os.environ.get('MODE', 'unknown')
+        
         try:
             # 전체 통계
             total = supabase.table('bizinfo_complete').select('id').execute()
@@ -102,6 +243,7 @@ jobs:
             print('\n' + '='*60)
             print('      🏢 기업마당 처리 결과 보고서')
             print('='*60)
+            print(f'🔍 실행 모드: {mode.upper()}')
             print(f'📊 전체 데이터: {total_count}개')
             print(f'📊 오늘 신규 추가: {today_count}개')
             print(f'📊 정상 요약 보유 (샘플 1000개): {with_summary}개 ({with_summary*100/min(1000, total_count):.1f}%)')
@@ -141,11 +283,16 @@ jobs:
             else:
                 print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
             
-            # 8월 8일 버전 사용 알림
+            # 모드별 처리 방식 안내
             print('\n🔧 처리 방식:')
-            print('  - 8월 8일 정상 작동 버전 사용')
-            print('  - HTTP 크롤링 + BeautifulSoup')
-            print('  - 상세페이지 요약 생성 포함')
+            if mode == 'daily':
+                print('  - Daily 모드: 최근 7일 데이터만 처리')
+                print('  - 요약/첨부파일 누락 항목 선별 처리')
+                print('  - 빠른 실행 (2-5분)')
+            else:
+                print('  - Full 모드: 전체 데이터 점검')
+                print('  - 8월 8일 정상 작동 버전 사용')
+                print('  - HTTP 크롤링 + BeautifulSoup')
             
             if today_count > 0:
                 print(f'\n✅ 오늘 {today_count}개 처리 성공!')
@@ -158,4 +305,4 @@ jobs:
             print(f"보고서 생성 중 오류: {e}")
             exit(1)
         EOF
-        python report.py
+        MODE=${{ steps.mode.outputs.mode }} python report.py
