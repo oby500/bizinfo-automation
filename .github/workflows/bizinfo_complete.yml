@@ -29,7 +29,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install requests beautifulsoup4 supabase pandas openpyxl
-        pip install selenium webdriver-manager
+        pip install selenium webdriver-manager python-dotenv
     
     - name: Determine Mode
       id: mode
@@ -62,113 +62,17 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: Daily 모드 - 최근 데이터만 처리"
+        echo "  STEP 2: Daily 모드 - K-Startup 방식 처리"
         echo "======================================"
-        echo "최근 7일 이내 데이터 중 요약/첨부파일 누락된 항목만 처리..."
+        echo "최근 7일 데이터 중 DOC/HTML 타입 및 '다운로드' 파일명 수정..."
         
-        # Daily 모드: 최근 7일 + 품질 미달 데이터만 처리
-        cat << 'EOF' > daily_crawler.py
-        import os
-        import sys
-        import requests
-        from bs4 import BeautifulSoup
-        from supabase import create_client
-        from datetime import datetime, timedelta
-        import time
-        import threading
-        from queue import Queue
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # K-Startup 방식으로 파일 정보 수정 (Daily 모드용 수정)
+        sed -i 's/\.execute()/\.gte("created_at", (datetime.now() - timedelta(days=7)).isoformat()).execute()/' scripts/bizinfo_attachment_fix_kstartup_style.py
         
-        # Supabase 설정
-        url = os.environ.get('SUPABASE_URL')
-        key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+        # datetime import 추가
+        sed -i '1a from datetime import datetime, timedelta' scripts/bizinfo_attachment_fix_kstartup_style.py
         
-        if not url or not key:
-            print("환경변수 오류")
-            exit(1)
-            
-        supabase = create_client(url, key)
-        
-        # 7일 전 날짜
-        seven_days_ago = (datetime.now() - timedelta(days=7)).isoformat()
-        
-        print("📅 Daily 모드: 최근 7일 데이터 처리")
-        print(f"기준 날짜: {seven_days_ago}")
-        
-        # 최근 7일 이내 데이터 중 요약이 부실하거나 첨부파일이 없는 것
-        response = supabase.table('bizinfo_complete').select('*').gte('created_at', seven_days_ago).execute()
-        
-        to_process = []
-        for item in response.data:
-            # 요약이 150자 미만이거나 첨부파일이 없으면 처리 대상
-            if not item.get('bsns_sumry') or len(item.get('bsns_sumry', '')) < 150 or not item.get('attachment_urls'):
-                to_process.append(item)
-        
-        print(f"처리 대상: {len(to_process)}개")
-        
-        if len(to_process) == 0:
-            print("✅ 모든 최근 데이터가 정상입니다.")
-            exit(0)
-        
-        # 여기서부터는 bizinfo_attachment_crawler.py 로직 활용
-        def process_item(item):
-            try:
-                dtl_url = item.get('dtl_url')
-                if not dtl_url:
-                    return None
-                    
-                response = requests.get(dtl_url, timeout=10)
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 요약 추출
-                summary_parts = []
-                for row in soup.select('table tbody tr'):
-                    th = row.select_one('th')
-                    td = row.select_one('td')
-                    if th and td:
-                        label = th.get_text(strip=True)
-                        value = td.get_text(strip=True)
-                        if value and value != '-':
-                            summary_parts.append(f"{label}: {value}")
-                
-                summary = ' | '.join(summary_parts[:10]) if summary_parts else None
-                
-                # 첨부파일 추출
-                attachment_urls = []
-                for link in soup.select('a[href*="atchFileId"]'):
-                    href = link.get('href', '')
-                    if 'atchFileId' in href and 'fileSn' in href:
-                        file_url = f"https://www.bizinfo.go.kr{href}" if href.startswith('/') else href
-                        attachment_urls.append(file_url)
-                
-                # 업데이트
-                if summary or attachment_urls:
-                    update_data = {}
-                    if summary and len(summary) > 150:
-                        update_data['bsns_sumry'] = summary
-                    if attachment_urls:
-                        update_data['attachment_urls'] = attachment_urls
-                    
-                    if update_data:
-                        supabase.table('bizinfo_complete').update(update_data).eq('id', item['id']).execute()
-                        return True
-                        
-            except Exception as e:
-                print(f"오류 {item['id']}: {e}")
-                return False
-        
-        # 멀티스레딩으로 처리
-        success_count = 0
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(process_item, item) for item in to_process]
-            for future in as_completed(futures):
-                if future.result():
-                    success_count += 1
-        
-        print(f"✅ 처리 완료: {success_count}/{len(to_process)}개")
-        EOF
-        
-        python daily_crawler.py
+        python scripts/bizinfo_attachment_fix_kstartup_style.py
     
     - name: Step 2 - Full Mode Crawler  
       if: steps.mode.outputs.mode == 'full'
@@ -178,10 +82,13 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: Full 모드 - 전체 데이터 처리"
+        echo "  STEP 2: Full 모드 - K-Startup 방식 전체 처리"
         echo "======================================"
-        echo "모든 데이터 점검 및 누락된 요약/첨부파일 복구..."
-        python scripts/bizinfo_attachment_crawler.py
+        echo "전체 데이터 점검 및 파일 정보 정확도 개선..."
+        echo "K-Startup 방식: HEAD 요청 + 파일 시그니처로 정확한 타입 판별"
+        
+        # K-Startup 방식으로 전체 처리
+        python scripts/bizinfo_attachment_fix_kstartup_style.py
     
     - name: Step 3 - Attachment Processing
       env:
@@ -235,10 +142,27 @@ jobs:
             else:
                 with_summary = 0
             
-            # 첨부파일 보유 데이터
+            # 첨부파일 보유 데이터 및 타입 분석
             with_attach = supabase.table('bizinfo_complete').select('id,attachment_urls').limit(1000).execute()
-            attach_count = sum(1 for item in with_attach.data 
-                             if item.get('attachment_urls') and item['attachment_urls'] != [])
+            attach_count = 0
+            doc_count = 0
+            hwp_count = 0
+            pdf_count = 0
+            download_count = 0
+            
+            for item in with_attach.data:
+                if item.get('attachment_urls') and item['attachment_urls'] != []:
+                    attach_count += 1
+                    for att in item['attachment_urls']:
+                        file_type = att.get('type', '')
+                        if file_type == 'DOC':
+                            doc_count += 1
+                        elif file_type == 'HWP':
+                            hwp_count += 1
+                        elif file_type == 'PDF':
+                            pdf_count += 1
+                        if att.get('display_filename') == '다운로드':
+                            download_count += 1
             
             print('\n' + '='*60)
             print('      🏢 기업마당 처리 결과 보고서')
@@ -248,6 +172,13 @@ jobs:
             print(f'📊 오늘 신규 추가: {today_count}개')
             print(f'📊 정상 요약 보유 (샘플 1000개): {with_summary}개 ({with_summary*100/min(1000, total_count):.1f}%)')
             print(f'📊 첨부파일 보유 (샘플 1000개): {attach_count}개 ({attach_count*100/min(1000, total_count):.1f}%)')
+            
+            # 파일 타입 분포
+            print(f'\n📁 파일 타입 분포 (샘플 1000개):')
+            print(f'   - HWP: {hwp_count}개')
+            print(f'   - PDF: {pdf_count}개')
+            print(f'   - DOC: {doc_count}개 {"⚠️ 수정 필요" if doc_count > 0 else "✅"}')
+            print(f'   - "다운로드" 파일명: {download_count}개 {"⚠️ 수정 필요" if download_count > 0 else "✅"}')
             
             # 최근 데이터 상태 점검
             recent = supabase.table('bizinfo_complete').select('id,attachment_urls,bsns_sumry,created_at').order('created_at', desc=True).limit(100).execute()
@@ -287,12 +218,12 @@ jobs:
             print('\n🔧 처리 방식:')
             if mode == 'daily':
                 print('  - Daily 모드: 최근 7일 데이터만 처리')
-                print('  - 요약/첨부파일 누락 항목 선별 처리')
+                print('  - K-Startup 방식: HEAD 요청 + 파일 시그니처')
                 print('  - 빠른 실행 (2-5분)')
             else:
                 print('  - Full 모드: 전체 데이터 점검')
-                print('  - 8월 8일 정상 작동 버전 사용')
-                print('  - HTTP 크롤링 + BeautifulSoup')
+                print('  - K-Startup 방식: 정확한 파일 타입 판별')
+                print('  - 병렬 처리 10개로 속도 개선')
             
             if today_count > 0:
                 print(f'\n✅ 오늘 {today_count}개 처리 성공!')
