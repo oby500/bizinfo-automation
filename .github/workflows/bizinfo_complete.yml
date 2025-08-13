@@ -115,6 +115,22 @@ jobs:
         echo "🎯 목표: 모든 파일명을 정상적인 한글로 복구"
         python scripts/bizinfo_encoding_complete_fix.py
     
+    - name: Step 5 - Fix Legacy Data Issues
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo "  STEP 5: 레거시 데이터 문제 해결"
+        echo "======================================"
+        echo "🚨 문제 타입 수정:"
+        echo "  - type='getImageFile' → 실제 파일 타입으로 변환"
+        echo "  - type='DOC/HTML/UNKNOWN' → 적절한 타입으로 변환"
+        echo "  - 파일명='다운로드' → 실제 파일명 생성"
+        echo "📊 대상: 8월 5일 데이터 포함 전체 문제 파일 (약 3,000개)"
+        python scripts/bizinfo_aug5_data_fix.py
+    
     - name: Generate Final Report
       if: always()
       env:
@@ -125,6 +141,7 @@ jobs:
         import os
         from supabase import create_client
         from datetime import datetime
+        import json
         
         url = os.environ.get('SUPABASE_URL')
         key = os.environ.get('SUPABASE_SERVICE_KEY')
@@ -164,6 +181,9 @@ jobs:
             pdf_count = 0
             download_count = 0
             broken_count = 0
+            getimagefile_count = 0
+            unknown_count = 0
+            html_count = 0
             
             # 깨진 문자 패턴
             broken_patterns = ['â', 'ì', 'ë', 'í', 'ê', 'ã', 'ð', 'þ', 'ï', '¿', '½', 'Ã', 'Â']
@@ -175,12 +195,19 @@ jobs:
                         file_type = att.get('type', '')
                         filename = att.get('display_filename', '')
                         
-                        if file_type == 'DOC':
+                        if file_type == 'getImageFile':
+                            getimagefile_count += 1
+                        elif file_type == 'DOC':
                             doc_count += 1
+                        elif file_type == 'HTML':
+                            html_count += 1
+                        elif file_type == 'UNKNOWN':
+                            unknown_count += 1
                         elif file_type == 'HWP':
                             hwp_count += 1
                         elif file_type == 'PDF':
                             pdf_count += 1
+                            
                         if filename == '다운로드':
                             download_count += 1
                         # 깨진 파일명 체크
@@ -198,11 +225,30 @@ jobs:
             
             # 파일 타입 분포
             print(f'\n📁 파일 타입 분포 (샘플 1000개):')
-            print(f'   - HWP: {hwp_count}개')
-            print(f'   - PDF: {pdf_count}개')
-            print(f'   - DOC: {doc_count}개 {"⚠️ 수정 필요" if doc_count > 0 else "✅"}')
-            print(f'   - "다운로드" 파일명: {download_count}개 {"⚠️ 수정 필요" if download_count > 0 else "✅"}')
-            print(f'   - 깨진 파일명: {broken_count}개 {"⚠️ 인코딩 문제" if broken_count > 0 else "✅"}')
+            print(f'   - HWP: {hwp_count}개 ✅')
+            print(f'   - PDF: {pdf_count}개 ✅')
+            
+            # 문제 타입들
+            problem_types = []
+            if getimagefile_count > 0:
+                problem_types.append(f'   - getImageFile: {getimagefile_count}개 ⚠️ 타입 오류')
+            if doc_count > 0:
+                problem_types.append(f'   - DOC: {doc_count}개 ⚠️ 수정 필요')
+            if html_count > 0:
+                problem_types.append(f'   - HTML: {html_count}개 ⚠️ 수정 필요')
+            if unknown_count > 0:
+                problem_types.append(f'   - UNKNOWN: {unknown_count}개 ⚠️ 수정 필요')
+            
+            if problem_types:
+                print('\n🚨 문제 타입:')
+                for pt in problem_types:
+                    print(pt)
+            
+            if download_count > 0:
+                print(f'\n📎 파일명 문제:')
+                print(f'   - "다운로드" 파일명: {download_count}개 ⚠️')
+            if broken_count > 0:
+                print(f'   - 깨진 파일명: {broken_count}개 ⚠️')
             
             # 최근 데이터 상태 점검
             recent = supabase.table('bizinfo_complete').select('id,attachment_urls,bsns_sumry,created_at').order('created_at', desc=True).limit(100).execute()
@@ -212,18 +258,26 @@ jobs:
                 recent_with_summary = sum(1 for item in recent.data 
                                         if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
                 recent_broken = 0
+                recent_getimagefile = 0
                 for item in recent.data:
                     if item.get('attachment_urls'):
                         for att in item['attachment_urls']:
                             filename = att.get('display_filename', '')
+                            file_type = att.get('type', '')
                             if any(pattern in filename for pattern in broken_patterns):
                                 recent_broken += 1
+                                break
+                            if file_type == 'getImageFile':
+                                recent_getimagefile += 1
                                 break
                 
                 print(f'\n📌 최근 100개 데이터:')
                 print(f'   - 첨부파일 보유: {recent_with_attach}개 ({recent_with_attach}%)')
                 print(f'   - 정상 요약: {recent_with_summary}개 ({recent_with_summary}%)')
-                print(f'   - 깨진 파일명: {recent_broken}개 {"⚠️" if recent_broken > 0 else "✅"}')
+                if recent_broken > 0:
+                    print(f'   - 깨진 파일명: {recent_broken}개 ⚠️')
+                if recent_getimagefile > 0:
+                    print(f'   - getImageFile 타입: {recent_getimagefile}개 ⚠️')
                 
                 if recent_with_attach < 70:
                     print('   ⚠️ 경고: 최근 데이터 첨부파일 수집률이 낮습니다!')
@@ -249,28 +303,32 @@ jobs:
             else:
                 print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
             
-            if broken_count == 0:
-                print('  ✅ 인코딩: 정상 (깨진 파일명 없음)')
+            # 문제 평가
+            total_problems = getimagefile_count + doc_count + html_count + unknown_count + broken_count + download_count
+            if total_problems == 0:
+                print('  ✅ 파일 타입: 완벽 (문제 없음)')
+            elif total_problems < 10:
+                print(f'  ⚠️ 파일 타입: {total_problems}개 문제 감지 (미미함)')
             else:
-                print(f'  ⚠️ 인코딩: {broken_count}개 파일명 깨짐 감지')
+                print(f'  🚨 파일 타입: {total_problems}개 문제 감지 (처리 필요)')
             
             # 모드별 처리 방식 안내
-            print('\n🔧 처리 방식:')
-            if mode == 'daily':
-                print('  - Daily 모드: 최근 7일 데이터만 처리')
-                print('  - K-Startup 방식: HEAD 요청 + 파일 시그니처')
-                print('  - STEP 4: 인코딩 문제 완전 해결 (이중 인코딩 복구)')
-                print('  - 빠른 실행 (2-5분)')
-            else:
-                print('  - Full 모드: 전체 데이터 점검')
-                print('  - K-Startup 방식: 정확한 파일 타입 판별')
-                print('  - STEP 4: 깨진 파일명 전체 복구 (이중 인코딩 포함)')
-                print('  - 병렬 처리 5개로 안정성 확보')
+            print('\n🔧 처리 단계:')
+            print('  STEP 1: 엑셀 데이터 수집')
+            print('  STEP 2: K-Startup 방식 첨부파일 처리')
+            print('  STEP 3: 첨부파일 정리')
+            print('  STEP 4: 인코딩 문제 해결')
+            print('  STEP 5: 레거시 데이터 문제 해결 (getImageFile 타입 등)')
             
             if today_count > 0:
                 print(f'\n✅ 오늘 {today_count}개 처리 성공!')
             else:
                 print('\n⚠️ 오늘 새로운 데이터가 없습니다')
+            
+            # K-Startup 상태도 확인
+            k_total = supabase.table('kstartup_complete').select('id').execute()
+            k_total_count = len(k_total.data) if k_total.data else 0
+            print(f'\n📊 K-Startup 현황: {k_total_count}개 (참고)')
             
             print('='*60)
             
