@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-기업마당 첨부파일 크롤러 - 미처리 데이터만 처리
-이미 처리된 데이터는 제외하고 실패한 것만 재처리
+기업마당 첨부파일 크롤러 - 실제 파일 타입 감지 버전
+HEAD 요청으로 Content-Type을 확인하여 정확한 파일 타입 저장
 """
 import os
 import sys
@@ -13,6 +13,7 @@ from supabase import create_client
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import mimetypes
 
 # 전역 변수
 lock = threading.Lock()
@@ -21,25 +22,103 @@ error_count = 0
 attachment_total = 0
 skip_count = 0
 
-def extract_file_type(text):
-    """파일명에서 확장자 추측"""
-    text_lower = text.lower()
-    if '.hwp' in text_lower or '한글' in text_lower:
+def get_file_type_from_url(url, session=None):
+    """HEAD 요청으로 실제 파일 타입 감지"""
+    if session is None:
+        session = requests.Session()
+    
+    try:
+        # HEAD 요청으로 Content-Type 확인
+        response = session.head(url, timeout=5, allow_redirects=True)
+        content_type = response.headers.get('Content-Type', '').lower()
+        
+        # Content-Type으로 확장자 결정
+        if 'pdf' in content_type:
+            return 'PDF'
+        elif 'hwp' in content_type or 'haansoft' in content_type or 'x-hwp' in content_type:
+            return 'HWP'
+        elif 'word' in content_type or 'msword' in content_type or 'document' in content_type:
+            return 'DOCX'
+        elif 'excel' in content_type or 'spreadsheet' in content_type or 'ms-excel' in content_type:
+            return 'XLSX'
+        elif 'powerpoint' in content_type or 'presentation' in content_type:
+            return 'PPT'
+        elif 'zip' in content_type or 'x-zip' in content_type or 'compressed' in content_type:
+            return 'ZIP'
+        elif 'image' in content_type:
+            if 'jpeg' in content_type or 'jpg' in content_type:
+                return 'JPG'
+            elif 'png' in content_type:
+                return 'PNG'
+            elif 'gif' in content_type:
+                return 'GIF'
+            else:
+                return 'IMAGE'
+        elif 'text' in content_type:
+            if 'plain' in content_type:
+                return 'TXT'
+            elif 'html' in content_type:
+                return 'HTML'
+            else:
+                return 'TEXT'
+        elif 'octet-stream' in content_type:
+            # octet-stream인 경우 URL의 확장자로 추측
+            return guess_type_from_url(url)
+        else:
+            return 'UNKNOWN'
+            
+    except Exception as e:
+        # HEAD 요청 실패 시 URL에서 추측
+        return guess_type_from_url(url)
+
+def guess_type_from_url(url):
+    """URL 또는 파일명에서 확장자 추측 (폴백용)"""
+    url_lower = url.lower()
+    
+    # URL에서 확장자 추출 시도
+    if '.hwp' in url_lower or '.hwpx' in url_lower:
         return 'HWP'
-    elif '.pdf' in text_lower:
+    elif '.pdf' in url_lower:
         return 'PDF'
-    elif '.doc' in text_lower or 'word' in text_lower:
+    elif '.doc' in url_lower or '.docx' in url_lower:
         return 'DOCX'
-    elif '.xls' in text_lower or 'excel' in text_lower:
+    elif '.xls' in url_lower or '.xlsx' in url_lower:
         return 'XLSX'
-    elif '.zip' in text_lower or '.rar' in text_lower:
-        return 'ZIP'
-    elif '.png' in text_lower or '.jpg' in text_lower or '.gif' in text_lower:
-        return 'IMAGE'
-    elif '.ppt' in text_lower:
+    elif '.ppt' in url_lower or '.pptx' in url_lower:
         return 'PPT'
+    elif '.zip' in url_lower or '.rar' in url_lower or '.7z' in url_lower:
+        return 'ZIP'
+    elif '.jpg' in url_lower or '.jpeg' in url_lower:
+        return 'JPG'
+    elif '.png' in url_lower:
+        return 'PNG'
+    elif '.gif' in url_lower:
+        return 'GIF'
+    elif '.txt' in url_lower:
+        return 'TXT'
+    elif '.rtf' in url_lower:
+        return 'RTF'
     else:
         return 'UNKNOWN'
+
+def extract_file_type_from_text(text):
+    """링크 텍스트에서 파일 타입 힌트 추출"""
+    text_lower = text.lower()
+    if '한글' in text_lower or 'hwp' in text_lower:
+        return 'HWP'
+    elif 'pdf' in text_lower:
+        return 'PDF'
+    elif 'word' in text_lower or 'doc' in text_lower:
+        return 'DOCX'
+    elif 'excel' in text_lower or 'xls' in text_lower or '엑셀' in text_lower:
+        return 'XLSX'
+    elif 'ppt' in text_lower or 'powerpoint' in text_lower or '파워포인트' in text_lower:
+        return 'PPT'
+    elif 'zip' in text_lower or '압축' in text_lower:
+        return 'ZIP'
+    elif '이미지' in text_lower or 'image' in text_lower or '사진' in text_lower:
+        return 'IMAGE'
+    return None
 
 def process_item(data, idx, total, supabase):
     """개별 항목 처리"""
@@ -49,8 +128,16 @@ def process_item(data, idx, total, supabase):
     current_summary = data.get('bsns_sumry', '')
     current_attachments = data.get('attachment_urls')
     
-    # 이미 충분히 처리된 경우 스킵
-    if current_summary and len(current_summary) >= 150 and current_attachments:
+    # 첨부파일이 있고 모든 파일이 UNKNOWN이 아닌 경우만 스킵
+    has_valid_types = False
+    if current_attachments:
+        for att in current_attachments:
+            if isinstance(att, dict) and att.get('type') != 'UNKNOWN':
+                has_valid_types = True
+                break
+    
+    # 이미 충분히 처리된 경우 스킵 (요약도 충분하고 파일 타입도 정상)
+    if current_summary and len(current_summary) >= 150 and has_valid_types:
         with lock:
             skip_count += 1
         print(f"[{idx}/{total}] ⏭️ 이미 처리 완료")
@@ -110,6 +197,7 @@ def process_item(data, idx, total, supabase):
         
         # 첨부파일 정보 추출
         attachments = []
+        processed_urls = set()  # 중복 체크용
         
         # 방법 1: atchFileId가 있는 모든 링크 찾기
         file_links = soup.find_all('a', href=lambda x: x and 'atchFileId=' in x)
@@ -128,17 +216,32 @@ def process_item(data, idx, total, supabase):
                 if 'fileSn=' in href:
                     file_sn = href.split('fileSn=')[1].split('&')[0]
                 
-                # 파일 타입 추측
-                file_type = extract_file_type(text)
-                
-                # 직접 다운로드 URL 구성 (세션 없이도 접근 가능)
+                # 직접 다운로드 URL 구성
                 direct_url = f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}"
+                
+                # 중복 체크
+                if direct_url in processed_urls:
+                    continue
+                processed_urls.add(direct_url)
+                
+                # 실제 파일 타입 감지 (HEAD 요청)
+                file_type = get_file_type_from_url(direct_url, session)
+                
+                # 여전히 UNKNOWN이면 텍스트에서 힌트 찾기
+                if file_type == 'UNKNOWN':
+                    text_hint = extract_file_type_from_text(text)
+                    if text_hint:
+                        file_type = text_hint
+                
+                # 파일명 정리
+                display_filename = text or f"첨부파일_{len(attachments)+1}"
+                safe_filename = f"{pblanc_id}_{len(attachments)+1:02d}.{file_type.lower()}"
                 
                 attachment = {
                     'url': direct_url,
                     'type': file_type,
-                    'safe_filename': f"{pblanc_id}_{len(attachments)+1:02d}.{file_type.lower()}",
-                    'display_filename': text or f"첨부파일_{len(attachments)+1}",
+                    'safe_filename': safe_filename,
+                    'display_filename': display_filename,
                     'original_filename': text,
                     'text': text,
                     'params': {
@@ -147,15 +250,7 @@ def process_item(data, idx, total, supabase):
                     }
                 }
                 
-                # 중복 체크
-                is_duplicate = any(
-                    a['params']['atchFileId'] == atch_file_id and 
-                    a['params']['fileSn'] == file_sn 
-                    for a in attachments
-                )
-                
-                if not is_duplicate:
-                    attachments.append(attachment)
+                attachments.append(attachment)
         
         # 방법 2: 첨부파일 영역에서 추가 찾기
         if not attachments:
@@ -168,13 +263,19 @@ def process_item(data, idx, total, supabase):
                         atch_file_id = href.split('atchFileId=')[1].split('&')[0]
                         file_sn = href.split('fileSn=')[1].split('&')[0] if 'fileSn=' in href else '0'
                         
-                        attachments.append({
-                            'url': f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}",
-                            'type': 'UNKNOWN',
-                            'safe_filename': f"{pblanc_id}_{len(attachments)+1:02d}.unknown",
-                            'display_filename': link.get_text(strip=True) or f"첨부파일_{len(attachments)+1}",
-                            'params': {'atchFileId': atch_file_id, 'fileSn': file_sn}
-                        })
+                        direct_url = f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}"
+                        
+                        if direct_url not in processed_urls:
+                            processed_urls.add(direct_url)
+                            file_type = get_file_type_from_url(direct_url, session)
+                            
+                            attachments.append({
+                                'url': direct_url,
+                                'type': file_type,
+                                'safe_filename': f"{pblanc_id}_{len(attachments)+1:02d}.{file_type.lower()}",
+                                'display_filename': link.get_text(strip=True) or f"첨부파일_{len(attachments)+1}",
+                                'params': {'atchFileId': atch_file_id, 'fileSn': file_sn}
+                            })
         
         # 상세 내용 추출 (요약 개선용)
         content_parts = []
@@ -226,7 +327,8 @@ def process_item(data, idx, total, supabase):
         # DB 업데이트 - 실제 변경사항이 있을 때만
         update_data = {}
         
-        if attachments and not current_attachments:
+        # 첨부파일이 없거나 UNKNOWN만 있는 경우 업데이트
+        if attachments and (not current_attachments or not has_valid_types):
             update_data['attachment_urls'] = attachments
             with lock:
                 attachment_total += len(attachments)
@@ -241,7 +343,17 @@ def process_item(data, idx, total, supabase):
             
             with lock:
                 success_count += 1
-            print(f"  [{idx}] ✅ 성공 (첨부: {len(attachments)}개, 요약: {len(new_summary)}자)")
+            
+            # 파일 타입 통계 출력
+            if attachments:
+                type_counts = {}
+                for att in attachments:
+                    file_type = att.get('type', 'UNKNOWN')
+                    type_counts[file_type] = type_counts.get(file_type, 0) + 1
+                type_info = ', '.join([f"{t}:{c}" for t, c in type_counts.items()])
+                print(f"  [{idx}] ✅ 성공 (첨부: {len(attachments)}개 [{type_info}], 요약: {len(new_summary)}자)")
+            else:
+                print(f"  [{idx}] ✅ 성공 (요약: {len(new_summary)}자)")
             return True
         else:
             with lock:
@@ -259,7 +371,8 @@ def main():
     global success_count, error_count, attachment_total, skip_count
     
     print("=" * 60)
-    print(" 기업마당 미처리 데이터 크롤링")
+    print(" 기업마당 첨부파일 타입 복구 크롤링")
+    print(" - HEAD 요청으로 실제 파일 타입 감지")
     print("=" * 60)
     
     # Supabase 연결
@@ -272,7 +385,7 @@ def main():
     
     supabase = create_client(supabase_url, supabase_key)
     
-    # 처리 대상 조회 - 미처리 데이터만
+    # 처리 대상 조회
     print("1. 처리 대상 조회 중...")
     try:
         # 전체 데이터 조회 (최대 5000개)
@@ -294,21 +407,33 @@ def main():
             if len(all_targets) >= 5000:  # 최대 5000개
                 break
         
-        # 미처리 데이터만 필터링
+        # 처리 대상 분류
         targets = []
+        unknown_count = 0
         already_done = 0
+        
         for item in all_targets:
             bsns_sumry = item.get('bsns_sumry', '')
             attachment_urls = item.get('attachment_urls')
             
-            # 요약이 부족하거나 첨부파일이 없는 경우만
-            if (not bsns_sumry or len(bsns_sumry) < 150) or (not attachment_urls):
+            # 첨부파일이 있는 경우 UNKNOWN 체크
+            has_unknown = False
+            if attachment_urls:
+                for att in attachment_urls:
+                    if isinstance(att, dict) and att.get('type') == 'UNKNOWN':
+                        has_unknown = True
+                        unknown_count += 1
+                        break
+            
+            # UNKNOWN이 있거나, 요약이 부족하거나, 첨부파일이 없는 경우
+            if has_unknown or (not bsns_sumry or len(bsns_sumry) < 150) or (not attachment_urls):
                 targets.append(item)
             else:
                 already_done += 1
         
         print(f"✅ 전체: {len(all_targets)}개")
-        print(f"✅ 이미 처리: {already_done}개")
+        print(f"✅ UNKNOWN 파일 타입: {unknown_count}개")
+        print(f"✅ 이미 처리 완료: {already_done}개")
         print(f"✅ 처리 필요: {len(targets)}개")
         
     except Exception as e:
@@ -319,9 +444,9 @@ def main():
         print("처리할 데이터가 없습니다.")
         return
     
-    print("\n2. 안정적인 크롤링 시작...")
+    print("\n2. 파일 타입 복구 크롤링 시작...")
     print(f"   - 스레드 수: 5개 (안정성 우선)")
-    print(f"   - 재시도: 3회")
+    print(f"   - HEAD 요청으로 실제 파일 타입 확인")
     print(f"   - 예상 시간: {len(targets) // 5 // 2}분")
     print("-" * 60)
     
@@ -341,7 +466,7 @@ def main():
             for i, data in enumerate(batch, batch_start + 1):
                 future = executor.submit(process_item, data, i, len(targets), supabase)
                 futures.append(future)
-                time.sleep(0.2)  # 요청 간격 늘림
+                time.sleep(0.2)  # 요청 간격
             
             # 결과 대기
             for future in as_completed(futures):
@@ -356,7 +481,7 @@ def main():
     
     # 결과 출력
     print("\n" + "=" * 60)
-    print(" 크롤링 완료")
+    print(" 파일 타입 복구 완료")
     print("=" * 60)
     print(f"✅ 성공: {success_count}개")
     print(f"⏭️ 스킵: {skip_count}개 (이미 처리됨)")
