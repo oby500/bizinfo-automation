@@ -42,6 +42,19 @@ jobs:
           echo "🎯 수동 실행: ${{ github.event.inputs.mode || 'daily' }} 모드"
         fi
     
+    - name: Step 0 - Data Normalization
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo "  STEP 0: 데이터 정규화"
+        echo "======================================"
+        echo "🔧 attachment_urls 데이터 타입 정규화"
+        echo "문자열로 저장된 데이터를 JSON 배열로 변환"
+        python scripts/bizinfo_normalize_attachments.py
+    
     - name: Step 1 - Excel Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -72,7 +85,7 @@ jobs:
         # datetime import 추가
         sed -i '1a from datetime import datetime, timedelta' scripts/bizinfo_attachment_fix_kstartup_style.py
         
-        python scripts/bizinfo_attachment_fix_kstartup_style.py
+        python scripts/bizinfo_attachment_fix_kstartup_style.py || echo "STEP 2 실패 - 계속 진행"
     
     - name: Step 2 - Full Mode Crawler  
       if: steps.mode.outputs.mode == 'full'
@@ -88,7 +101,7 @@ jobs:
         echo "K-Startup 방식: HEAD 요청 + 파일 시그니처로 정확한 타입 판별"
         
         # K-Startup 방식으로 전체 처리
-        python scripts/bizinfo_attachment_fix_kstartup_style.py
+        python scripts/bizinfo_attachment_fix_kstartup_style.py || echo "STEP 2 실패 - 계속 진행"
     
     - name: Step 3 - Attachment Processing
       env:
@@ -99,7 +112,7 @@ jobs:
         echo "======================================"
         echo "  STEP 3: 첨부파일 정리"
         echo "======================================"
-        python scripts/bizinfo_complete_processor_fast.py
+        python scripts/bizinfo_complete_processor_fast.py || echo "STEP 3 실패 - 계속 진행"
     
     - name: Step 4 - Fix All Filename Issues
       env:
@@ -119,13 +132,13 @@ jobs:
         # 긴급 수정 스크립트 실행 (HTML + 패턴 + 생성)
         if [ -f "scripts/bizinfo_filename_emergency_fix.py" ]; then
             echo "✅ 강화된 3단계 복구 스크립트 실행"
-            python scripts/bizinfo_filename_emergency_fix.py
+            python scripts/bizinfo_filename_emergency_fix.py || echo "STEP 4 실패 - 계속 진행"
         elif [ -f "scripts/bizinfo_html_filename_fix.py" ]; then
             echo "⚠️ HTML 재크롤링 스크립트 실행"
-            python scripts/bizinfo_html_filename_fix.py
+            python scripts/bizinfo_html_filename_fix.py || echo "STEP 4 실패 - 계속 진행"
         else
             echo "⚠️ 기본 인코딩 수정 스크립트 실행"
-            python scripts/bizinfo_encoding_complete_fix.py
+            python scripts/bizinfo_encoding_complete_fix.py || echo "STEP 4 실패 - 계속 진행"
         fi
     
     - name: Step 5 - Fix Legacy Data Issues
@@ -142,7 +155,7 @@ jobs:
         echo "  - type='DOC/HTML/UNKNOWN' → 적절한 타입으로 변환"
         echo "  - 파일명='다운로드' → 실제 파일명 생성"
         echo "📊 대상: 8월 5일 데이터 포함 전체 문제 파일"
-        python scripts/bizinfo_aug5_data_fix.py
+        python scripts/bizinfo_aug5_data_fix.py || echo "STEP 5 실패 - 계속 진행"
     
     - name: Generate Final Report
       if: always()
@@ -202,30 +215,40 @@ jobs:
             broken_patterns = ['â', 'ì', 'ë', 'í', 'ê', 'ã', 'ð', 'þ', 'ï', '¿', '½', 'Ã', 'Â']
             
             for item in with_attach.data:
-                if item.get('attachment_urls') and item['attachment_urls'] != []:
-                    attach_count += 1
-                    for att in item['attachment_urls']:
-                        file_type = att.get('type', '')
-                        filename = att.get('display_filename', '')
-                        
-                        if file_type == 'getImageFile':
-                            getimagefile_count += 1
-                        elif file_type == 'DOC':
-                            doc_count += 1
-                        elif file_type == 'HTML':
-                            html_count += 1
-                        elif file_type == 'UNKNOWN':
-                            unknown_count += 1
-                        elif file_type == 'HWP':
-                            hwp_count += 1
-                        elif file_type == 'PDF':
-                            pdf_count += 1
-                            
-                        if filename == '다운로드':
-                            download_count += 1
-                        # 깨진 파일명 체크
-                        if any(pattern in filename for pattern in broken_patterns):
-                            broken_count += 1
+                attachments = item.get('attachment_urls')
+                if attachments:
+                    # 문자열인 경우 JSON 파싱
+                    if isinstance(attachments, str):
+                        try:
+                            attachments = json.loads(attachments)
+                        except:
+                            continue
+                    
+                    if isinstance(attachments, list) and len(attachments) > 0:
+                        attach_count += 1
+                        for att in attachments:
+                            if isinstance(att, dict):
+                                file_type = att.get('type', '')
+                                filename = att.get('display_filename', '')
+                                
+                                if file_type == 'getImageFile':
+                                    getimagefile_count += 1
+                                elif file_type == 'DOC':
+                                    doc_count += 1
+                                elif file_type == 'HTML':
+                                    html_count += 1
+                                elif file_type == 'UNKNOWN':
+                                    unknown_count += 1
+                                elif file_type == 'HWP':
+                                    hwp_count += 1
+                                elif file_type == 'PDF':
+                                    pdf_count += 1
+                                    
+                                if filename == '다운로드':
+                                    download_count += 1
+                                # 깨진 파일명 체크
+                                if any(pattern in filename for pattern in broken_patterns):
+                                    broken_count += 1
             
             print('\n' + '='*60)
             print('      🏢 기업마당 처리 결과 보고서')
@@ -273,16 +296,26 @@ jobs:
                 recent_broken = 0
                 recent_getimagefile = 0
                 for item in recent.data:
-                    if item.get('attachment_urls'):
-                        for att in item['attachment_urls']:
-                            filename = att.get('display_filename', '')
-                            file_type = att.get('type', '')
-                            if any(pattern in filename for pattern in broken_patterns):
-                                recent_broken += 1
-                                break
-                            if file_type == 'getImageFile':
-                                recent_getimagefile += 1
-                                break
+                    attachments = item.get('attachment_urls')
+                    if attachments:
+                        # 문자열 처리
+                        if isinstance(attachments, str):
+                            try:
+                                attachments = json.loads(attachments)
+                            except:
+                                continue
+                        
+                        if isinstance(attachments, list):
+                            for att in attachments:
+                                if isinstance(att, dict):
+                                    filename = att.get('display_filename', '')
+                                    file_type = att.get('type', '')
+                                    if any(pattern in filename for pattern in broken_patterns):
+                                        recent_broken += 1
+                                        break
+                                    if file_type == 'getImageFile':
+                                        recent_getimagefile += 1
+                                        break
                 
                 print(f'\n📌 최근 100개 데이터:')
                 print(f'   - 첨부파일 보유: {recent_with_attach}개 ({recent_with_attach}%)')
@@ -327,6 +360,7 @@ jobs:
             
             # 모드별 처리 방식 안내
             print('\n🔧 처리 단계:')
+            print('  STEP 0: 데이터 정규화')
             print('  STEP 1: 엑셀 데이터 수집')
             print('  STEP 2: K-Startup 방식 첨부파일 처리')
             print('  STEP 3: 첨부파일 정리')
