@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-기업마당 첨부파일 크롤러 - 파일 시그니처로 실제 타입 감지
-파일의 처음 몇 바이트를 읽어 실제 파일 타입 판단
+기업마당 첨부파일 크롤러 - 정확한 파일명 추출 버전
+div.file_name과 title 속성에서 파일명을 직접 추출하여 정확한 파일 타입 감지
 """
 import os
 import sys
@@ -23,8 +23,60 @@ attachment_total = 0
 skip_count = 0
 type_fixed = 0
 
+def extract_file_type_from_filename(filename):
+    """파일명에서 확장자 추출"""
+    if not filename:
+        return 'UNKNOWN'
+    
+    filename_lower = filename.lower()
+    
+    if '.hwp' in filename_lower or '.hwpx' in filename_lower:
+        return 'HWP'
+    elif '.pdf' in filename_lower:
+        return 'PDF'
+    elif '.docx' in filename_lower:
+        return 'DOCX'
+    elif '.doc' in filename_lower:
+        return 'DOC'
+    elif '.xlsx' in filename_lower:
+        return 'XLSX'
+    elif '.xls' in filename_lower:
+        return 'XLS'
+    elif '.pptx' in filename_lower:
+        return 'PPTX'
+    elif '.ppt' in filename_lower:
+        return 'PPT'
+    elif '.zip' in filename_lower or '.rar' in filename_lower:
+        return 'ZIP'
+    elif '.jpg' in filename_lower or '.jpeg' in filename_lower:
+        return 'JPG'
+    elif '.png' in filename_lower:
+        return 'PNG'
+    elif '.gif' in filename_lower:
+        return 'GIF'
+    elif '.txt' in filename_lower:
+        return 'TXT'
+    elif '.rtf' in filename_lower:
+        return 'RTF'
+    else:
+        return 'UNKNOWN'
+
+def clean_filename(text):
+    """파일명 정리"""
+    if not text:
+        return None
+    
+    # 불필요한 텍스트 제거
+    text = text.strip()
+    text = re.sub(r'다운로드$', '', text)
+    text = re.sub(r'바로보기.*$', '', text)
+    text = re.sub(r'새 창 열기$', '', text)
+    text = re.sub(r'^첨부파일\s*', '', text)
+    
+    return text.strip()
+
 def get_file_type_by_signature(url, session=None):
-    """파일의 처음 몇 바이트를 읽어 실제 타입 판단"""
+    """파일의 처음 몇 바이트를 읽어 실제 타입 판단 (폴백용)"""
     if session is None:
         session = requests.Session()
     
@@ -49,152 +101,17 @@ def get_file_type_by_signature(url, session=None):
             # ZIP
             elif content[:2] == b'PK':
                 return 'ZIP'
-            # MS Office 2007+ (DOCX, XLSX, PPTX) - ZIP 기반
-            elif content[:4] == b'PK\x03\x04':
-                # 더 자세한 판단을 위해 더 많이 읽기
-                full_response = session.get(url, timeout=15)
-                full_content = full_response.content
-                
-                # Content-Type 힌트 확인
-                content_type = full_response.headers.get('Content-Type', '').lower()
-                
-                # 파일 내용으로 판단
-                if b'word/' in full_content[:2000]:
-                    return 'DOCX'
-                elif b'xl/' in full_content[:2000]:
-                    return 'XLSX'
-                elif b'ppt/' in full_content[:2000]:
-                    return 'PPTX'
-                else:
-                    return 'ZIP'
-            # MS Office 97-2003
-            elif content[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
-                return 'DOC'  # 또는 XLS, PPT - 구분 어려움
             # HWP 5.0
             elif content[:4] == b'\xd0\xcf\x11\xe0' or content[:8] == b'HWP Document':
                 return 'HWP'
             # HWP 3.0
             elif len(content) >= 32 and b'HWP' in content[:32]:
                 return 'HWP'
-            # JPEG
-            elif content[:3] == b'\xff\xd8\xff':
-                return 'JPG'
-            # PNG
-            elif content[:8] == b'\x89PNG\r\n\x1a\n':
-                return 'PNG'
-            # GIF
-            elif content[:6] in [b'GIF87a', b'GIF89a']:
-                return 'GIF'
-            # BMP
-            elif content[:2] == b'BM':
-                return 'BMP'
-            # RTF
-            elif content[:5] == b'{\\rtf':
-                return 'RTF'
-            # Plain Text (UTF-8 BOM)
-            elif content[:3] == b'\xef\xbb\xbf':
-                return 'TXT'
-            # HTML
-            elif b'<html' in content[:100].lower() or b'<!doctype html' in content[:100].lower():
-                return 'HTML'
-        
-        # 파일명에서 확장자 확인 (폴백)
-        if 'Content-Disposition' in response.headers:
-            disposition = response.headers['Content-Disposition']
-            if 'filename=' in disposition:
-                filename = disposition.split('filename=')[-1].strip('"').strip("'")
-                return guess_type_from_filename(filename)
         
         return 'UNKNOWN'
         
     except Exception as e:
-        print(f"    파일 시그니처 확인 실패: {str(e)[:30]}")
         return 'UNKNOWN'
-
-def guess_type_from_filename(filename):
-    """파일명에서 확장자 추출"""
-    if not filename:
-        return 'UNKNOWN'
-    
-    filename_lower = filename.lower()
-    
-    if filename_lower.endswith('.hwp') or filename_lower.endswith('.hwpx'):
-        return 'HWP'
-    elif filename_lower.endswith('.pdf'):
-        return 'PDF'
-    elif filename_lower.endswith('.docx'):
-        return 'DOCX'
-    elif filename_lower.endswith('.doc'):
-        return 'DOC'
-    elif filename_lower.endswith('.xlsx'):
-        return 'XLSX'
-    elif filename_lower.endswith('.xls'):
-        return 'XLS'
-    elif filename_lower.endswith('.pptx'):
-        return 'PPTX'
-    elif filename_lower.endswith('.ppt'):
-        return 'PPT'
-    elif filename_lower.endswith('.zip'):
-        return 'ZIP'
-    elif filename_lower.endswith('.jpg') or filename_lower.endswith('.jpeg'):
-        return 'JPG'
-    elif filename_lower.endswith('.png'):
-        return 'PNG'
-    elif filename_lower.endswith('.gif'):
-        return 'GIF'
-    elif filename_lower.endswith('.txt'):
-        return 'TXT'
-    elif filename_lower.endswith('.rtf'):
-        return 'RTF'
-    else:
-        return 'UNKNOWN'
-
-def extract_filename_from_text(text):
-    """링크 텍스트에서 실제 파일명 추출"""
-    if not text:
-        return None
-    
-    # 파일명 패턴 찾기
-    patterns = [
-        r'([가-힣a-zA-Z0-9\s\-\_\.]+\.(?:hwp|hwpx|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|jpg|jpeg|png|gif|txt|rtf))',
-        r'(\S+\.(?:hwp|hwpx|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|jpg|jpeg|png|gif|txt|rtf))'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1)
-    
-    return None
-
-def extract_file_type_from_text(text):
-    """링크 텍스트에서 파일 타입 힌트 추출"""
-    text_lower = text.lower()
-    
-    # 명확한 확장자가 텍스트에 있는 경우
-    filename = extract_filename_from_text(text)
-    if filename:
-        return guess_type_from_filename(filename)
-    
-    # 텍스트 힌트로 추측
-    if '한글' in text_lower or 'hwp' in text_lower:
-        return 'HWP'
-    elif 'pdf' in text_lower:
-        return 'PDF'
-    elif 'word' in text_lower or 'doc' in text_lower or '워드' in text_lower:
-        return 'DOCX'
-    elif 'excel' in text_lower or 'xls' in text_lower or '엑셀' in text_lower:
-        return 'XLSX'
-    elif 'ppt' in text_lower or 'powerpoint' in text_lower or '파워포인트' in text_lower:
-        return 'PPT'
-    elif 'zip' in text_lower or '압축' in text_lower:
-        return 'ZIP'
-    elif '이미지' in text_lower or 'image' in text_lower or '사진' in text_lower:
-        return 'IMAGE'
-    elif '양식' in text_lower or '서식' in text_lower or '신청서' in text_lower:
-        return 'HWP'  # 한국 공공기관 양식은 대부분 HWP
-    
-    return None
 
 def process_item(data, idx, total, supabase):
     """개별 항목 처리"""
@@ -204,16 +121,19 @@ def process_item(data, idx, total, supabase):
     current_summary = data.get('bsns_sumry', '')
     current_attachments = data.get('attachment_urls')
     
-    # 첨부파일이 있고 UNKNOWN이 있는지 체크
-    has_unknown = False
+    # 첨부파일이 있고 UNKNOWN/HTML/DOC이 있는지 체크
+    has_problem = False
     if current_attachments:
         for att in current_attachments:
-            if isinstance(att, dict) and (att.get('type') == 'UNKNOWN' or att.get('type') == 'HTML'):
-                has_unknown = True
-                break
+            if isinstance(att, dict):
+                file_type = att.get('type')
+                # DOC도 문제로 간주 (대부분 HWP여야 함)
+                if file_type in ['UNKNOWN', 'HTML', 'DOC']:
+                    has_problem = True
+                    break
     
-    # UNKNOWN이나 HTML이 없고 요약도 충분한 경우 스킵
-    if current_summary and len(current_summary) >= 150 and current_attachments and not has_unknown:
+    # 문제가 없고 요약도 충분한 경우 스킵
+    if current_summary and len(current_summary) >= 150 and current_attachments and not has_problem:
         with lock:
             skip_count += 1
         print(f"[{idx}/{total}] ⏭️ 이미 처리 완료")
@@ -236,63 +156,106 @@ def process_item(data, idx, total, supabase):
         print(f"[{idx}/{total}] {pblanc_nm}")
         
         # 이미 첨부파일이 있는 경우 타입만 수정
-        if current_attachments and has_unknown:
+        if current_attachments and has_problem:
             print(f"  [{idx}] 기존 첨부파일 타입 수정 중...")
             
-            updated_attachments = []
-            fixed_count = 0
-            
-            for att in current_attachments:
-                if isinstance(att, dict):
-                    new_att = att.copy()
+            # 상세 페이지에서 실제 파일명 가져오기
+            if dtl_url:
+                try:
+                    response = session.get(dtl_url, timeout=15)
+                    response.encoding = 'utf-8'
+                    soup = BeautifulSoup(response.text, 'html.parser')
                     
-                    # UNKNOWN이나 HTML인 경우만 재확인
-                    if att.get('type') in ['UNKNOWN', 'HTML']:
-                        url = att.get('url')
-                        text = att.get('text', '') or att.get('display_filename', '')
-                        
-                        # 1. 텍스트에서 파일명/타입 추출 시도
-                        text_type = extract_file_type_from_text(text)
-                        
-                        # 2. 파일 시그니처로 확인 (텍스트에서 못 찾은 경우)
-                        if not text_type or text_type == 'UNKNOWN':
-                            actual_type = get_file_type_by_signature(url, session)
+                    # div.file_name에서 파일명 추출
+                    file_names_map = {}
+                    file_names = soup.find_all('div', class_='file_name')
+                    
+                    for i, file_div in enumerate(file_names):
+                        filename = file_div.get_text(strip=True)
+                        filename = clean_filename(filename)
+                        if filename:
+                            file_names_map[i] = filename
+                    
+                    # title 속성에서도 파일명 추출
+                    download_links = soup.find_all('a', href=lambda x: x and 'atchFileId' in x)
+                    for link in download_links:
+                        title = link.get('title', '')
+                        if title and '첨부파일' in title:
+                            filename = re.sub(r'^첨부파일\s*', '', title)
+                            filename = re.sub(r'\s*다운로드$', '', filename)
+                            if filename:
+                                # atchFileId로 매핑
+                                href = link.get('href', '')
+                                if 'atchFileId=' in href:
+                                    atch_file_id = href.split('atchFileId=')[1].split('&')[0]
+                                    file_sn = '0'
+                                    if 'fileSn=' in href:
+                                        file_sn = href.split('fileSn=')[1].split('&')[0]
+                                    key = f"{atch_file_id}_{file_sn}"
+                                    file_names_map[key] = filename
+                    
+                    # 기존 첨부파일 타입 수정
+                    updated_attachments = []
+                    fixed_count = 0
+                    
+                    for i, att in enumerate(current_attachments):
+                        if isinstance(att, dict):
+                            new_att = att.copy()
+                            
+                            # 문제가 있는 타입인 경우
+                            if att.get('type') in ['UNKNOWN', 'HTML', 'DOC']:
+                                # 파일명 찾기
+                                actual_filename = None
+                                
+                                # 1. file_names_map에서 찾기
+                                if i in file_names_map:
+                                    actual_filename = file_names_map[i]
+                                elif att.get('params'):
+                                    key = f"{att['params'].get('atchFileId', '')}_{att['params'].get('fileSn', '0')}"
+                                    if key in file_names_map:
+                                        actual_filename = file_names_map[key]
+                                
+                                # 2. 파일명에서 타입 추출
+                                if actual_filename:
+                                    actual_type = extract_file_type_from_filename(actual_filename)
+                                    new_att['display_filename'] = actual_filename
+                                    new_att['original_filename'] = actual_filename
+                                else:
+                                    # 파일 시그니처로 확인 (폴백)
+                                    actual_type = get_file_type_by_signature(att.get('url'), session)
+                                
+                                # 3. 여전히 UNKNOWN이면 HWP로 가정 (한국 공공기관)
+                                if actual_type in ['UNKNOWN', 'HTML']:
+                                    actual_type = 'HWP'
+                                
+                                if att.get('type') != actual_type:
+                                    new_att['type'] = actual_type
+                                    new_att['safe_filename'] = f"{pblanc_id}_{i+1:02d}.{actual_type.lower()}"
+                                    fixed_count += 1
+                                    print(f"    - {att.get('type')} → {actual_type} ({actual_filename if actual_filename else 'signature'})")
+                            
+                            updated_attachments.append(new_att)
                         else:
-                            actual_type = text_type
-                        
-                        # 3. 여전히 UNKNOWN이면 텍스트 기반으로 한 번 더
-                        if actual_type in ['UNKNOWN', 'HTML'] and text:
-                            # 일반적인 패턴으로 추측
-                            if any(keyword in text for keyword in ['양식', '서식', '신청서', '계획서']):
-                                actual_type = 'HWP'
-                            elif '붙임' in text or '첨부' in text:
-                                actual_type = 'HWP'  # 한국 공공기관 기본
-                        
-                        if actual_type not in ['UNKNOWN', 'HTML']:
-                            new_att['type'] = actual_type
-                            new_att['safe_filename'] = f"{pblanc_id}_{len(updated_attachments)+1:02d}.{actual_type.lower()}"
-                            fixed_count += 1
-                            print(f"    - {att.get('type')} → {actual_type}")
+                            updated_attachments.append(att)
                     
-                    updated_attachments.append(new_att)
-                else:
-                    updated_attachments.append(att)
+                    if fixed_count > 0:
+                        # DB 업데이트
+                        result = supabase.table('bizinfo_complete').update({
+                            'attachment_urls': updated_attachments
+                        }).eq('id', data['id']).execute()
+                        
+                        with lock:
+                            success_count += 1
+                            type_fixed += fixed_count
+                        
+                        print(f"  [{idx}] ✅ 타입 수정: {fixed_count}개")
+                        return True
+                        
+                except Exception as e:
+                    print(f"  [{idx}] ⚠️ 페이지 파싱 실패: {str(e)[:30]}")
             
-            if fixed_count > 0:
-                # DB 업데이트
-                result = supabase.table('bizinfo_complete').update({
-                    'attachment_urls': updated_attachments
-                }).eq('id', data['id']).execute()
-                
-                with lock:
-                    success_count += 1
-                    type_fixed += fixed_count
-                
-                print(f"  [{idx}] ✅ 타입 수정: {fixed_count}개")
-                return True
-            else:
-                print(f"  [{idx}] ⏭️ 수정할 타입 없음")
-                return False
+            print(f"  [{idx}] ⏭️ 수정할 타입 없음")
+            return False
         
         # 새로 크롤링이 필요한 경우
         if not dtl_url:
@@ -328,58 +291,113 @@ def process_item(data, idx, total, supabase):
         
         # 첨부파일 정보 추출
         attachments = []
-        processed_urls = set()
+        unique_files = {}
         
-        # 모든 첨부파일 링크 찾기
-        file_links = soup.find_all('a', href=lambda x: x and 'atchFileId=' in x)
+        # 방법 1: file_name 클래스를 가진 div 찾기 (가장 정확)
+        file_names = soup.find_all('div', class_='file_name')
         
-        for link in file_links:
-            href = link.get('href', '')
-            text = link.get_text(strip=True)
+        for file_div in file_names:
+            filename = file_div.get_text(strip=True)
+            filename = clean_filename(filename)
             
-            if 'atchFileId=' in href:
-                atch_file_id = href.split('atchFileId=')[1].split('&')[0]
+            if filename:
+                # 같은 부모나 형제에서 다운로드 링크 찾기
+                parent = file_div.parent
+                if parent:
+                    download_link = parent.find('a', href=lambda x: x and 'atchFileId' in x)
+                    
+                    if download_link:
+                        href = download_link.get('href', '')
+                        
+                        # atchFileId 추출
+                        atch_file_id = ''
+                        file_sn = '0'
+                        if 'atchFileId=' in href:
+                            atch_file_id = href.split('atchFileId=')[1].split('&')[0]
+                        if 'fileSn=' in href:
+                            file_sn = href.split('fileSn=')[1].split('&')[0]
+                        
+                        if atch_file_id:
+                            direct_url = f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}"
+                            
+                            unique_key = f"{atch_file_id}_{file_sn}"
+                            if unique_key not in unique_files:
+                                file_type = extract_file_type_from_filename(filename)
+                                
+                                attachment = {
+                                    'url': direct_url,
+                                    'type': file_type,
+                                    'safe_filename': f"{pblanc_id}_{len(attachments)+1:02d}.{file_type.lower()}",
+                                    'display_filename': filename,
+                                    'original_filename': filename,
+                                    'text': filename,
+                                    'params': {
+                                        'atchFileId': atch_file_id,
+                                        'fileSn': file_sn
+                                    }
+                                }
+                                
+                                unique_files[unique_key] = attachment
+                                attachments.append(attachment)
+        
+        # 방법 2: title 속성이 있는 다운로드 링크 찾기 (백업)
+        if not attachments:
+            download_links = soup.find_all('a', href=lambda x: x and 'atchFileId' in x)
+            
+            for link in download_links:
+                href = link.get('href', '')
+                title = link.get('title', '')  # title 속성에 파일명이 있음
+                text = link.get_text(strip=True)
+                
+                # 파일명 결정 (우선순위: title > text)
+                filename = None
+                if title and '첨부파일' in title:
+                    # "첨부파일 파일명.hwp 다운로드" 형태
+                    filename = re.sub(r'^첨부파일\s*', '', title)
+                    filename = re.sub(r'\s*다운로드$', '', filename)
+                elif title:
+                    filename = title
+                elif text and text != '다운로드':
+                    filename = text
+                
+                if filename:
+                    filename = clean_filename(filename)
+                
+                # atchFileId 추출
+                atch_file_id = ''
                 file_sn = '0'
+                if 'atchFileId=' in href:
+                    atch_file_id = href.split('atchFileId=')[1].split('&')[0]
                 if 'fileSn=' in href:
                     file_sn = href.split('fileSn=')[1].split('&')[0]
                 
-                direct_url = f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}"
-                
-                if direct_url in processed_urls:
-                    continue
-                processed_urls.add(direct_url)
-                
-                # 파일 타입 감지
-                # 1. 텍스트에서 힌트 찾기
-                file_type = extract_file_type_from_text(text)
-                
-                # 2. 파일 시그니처로 확인
-                if not file_type or file_type == 'UNKNOWN':
-                    file_type = get_file_type_by_signature(direct_url, session)
-                
-                # 3. 기본값 설정
-                if file_type in ['UNKNOWN', 'HTML']:
-                    # 한국 공공기관 기본 양식은 HWP
-                    if any(keyword in text for keyword in ['양식', '서식', '신청', '계획']):
-                        file_type = 'HWP'
-                
-                display_filename = text or f"첨부파일_{len(attachments)+1}"
-                safe_filename = f"{pblanc_id}_{len(attachments)+1:02d}.{file_type.lower()}"
-                
-                attachment = {
-                    'url': direct_url,
-                    'type': file_type,
-                    'safe_filename': safe_filename,
-                    'display_filename': display_filename,
-                    'original_filename': text,
-                    'text': text,
-                    'params': {
-                        'atchFileId': atch_file_id,
-                        'fileSn': file_sn
-                    }
-                }
-                
-                attachments.append(attachment)
+                if atch_file_id:
+                    unique_key = f"{atch_file_id}_{file_sn}"
+                    
+                    if unique_key not in unique_files:
+                        direct_url = f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}"
+                        
+                        file_type = extract_file_type_from_filename(filename) if filename else 'UNKNOWN'
+                        
+                        # UNKNOWN이면 HWP로 가정 (한국 공공기관)
+                        if file_type == 'UNKNOWN':
+                            file_type = 'HWP'
+                        
+                        attachment = {
+                            'url': direct_url,
+                            'type': file_type,
+                            'safe_filename': f"{pblanc_id}_{len(attachments)+1:02d}.{file_type.lower()}",
+                            'display_filename': filename or f"첨부파일_{len(attachments)+1}",
+                            'original_filename': filename or text,
+                            'text': text,
+                            'params': {
+                                'atchFileId': atch_file_id,
+                                'fileSn': file_sn
+                            }
+                        }
+                        
+                        unique_files[unique_key] = attachment
+                        attachments.append(attachment)
         
         # 요약 생성/개선
         if not current_summary or len(current_summary) < 150:
@@ -456,9 +474,10 @@ def main():
     global success_count, error_count, attachment_total, skip_count, type_fixed
     
     print("=" * 60)
-    print(" 기업마당 첨부파일 타입 복구 크롤링 v2")
-    print(" - 파일 시그니처로 실제 타입 감지")
-    print(" - UNKNOWN/HTML 타입 수정")
+    print(" 기업마당 첨부파일 정확한 파일명 추출 v3")
+    print(" - div.file_name에서 실제 파일명 추출")
+    print(" - title 속성에서 파일명 확인")
+    print(" - DOC/HTML → 정확한 타입으로 수정")
     print("=" * 60)
     
     # Supabase 연결
@@ -496,6 +515,7 @@ def main():
         targets = []
         unknown_count = 0
         html_count = 0
+        doc_count = 0
         already_done = 0
         
         for item in all_targets:
@@ -514,6 +534,9 @@ def main():
                         elif file_type == 'HTML':
                             html_count += 1
                             needs_fix = True
+                        elif file_type == 'DOC':
+                            doc_count += 1
+                            needs_fix = True
             
             # 수정이 필요하거나 요약이 부족한 경우
             if needs_fix or (not bsns_sumry or len(bsns_sumry) < 150) or (not attachment_urls):
@@ -524,6 +547,7 @@ def main():
         print(f"✅ 전체: {len(all_targets)}개")
         print(f"⚠️ UNKNOWN 타입: {unknown_count}개")
         print(f"⚠️ HTML 타입: {html_count}개")
+        print(f"⚠️ DOC 타입: {doc_count}개 (대부분 HWP일 가능성)")
         print(f"✅ 정상 처리: {already_done}개")
         print(f"🔧 처리 필요: {len(targets)}개")
         
@@ -535,9 +559,9 @@ def main():
         print("처리할 데이터가 없습니다.")
         return
     
-    print("\n2. 파일 타입 복구 시작...")
-    print(f"   - 파일 시그니처 확인")
-    print(f"   - 텍스트 힌트 활용")
+    print("\n2. 파일명 추출 및 타입 수정 시작...")
+    print(f"   - div.file_name에서 파일명 추출")
+    print(f"   - title 속성에서 파일명 확인")
     print(f"   - 예상 시간: {len(targets) // 3}분")
     print("-" * 60)
     
@@ -569,7 +593,7 @@ def main():
     
     # 결과 출력
     print("\n" + "=" * 60)
-    print(" 파일 타입 복구 완료")
+    print(" 파일명 추출 및 타입 수정 완료")
     print("=" * 60)
     print(f"✅ 성공: {success_count}개")
     print(f"🔧 타입 수정: {type_fixed}개 파일")
