@@ -1,0 +1,35 @@
+name: 🚨 깨진 파일명 긴급 수정
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix-filenames:
+    name: 깨진 파일명 85개 긴급 처리
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install supabase requests beautifulsoup4
+    
+    - name: 깨진 파일명 긴급 수정 실행
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "=========================================="
+        echo "  🚨 깨진 파일명 긴급 수정"
+        echo "=========================================="
+        echo "📝 3단계 복구 프로세스:"
+        echo "  1. HTML에서 정확한 파일명 추출"
+        echo "  2. 패턴 기반 인코딩 수정"
+        echo "  3. 공고명 기반 새 파일명 생성"
+        echo ""
+        python scripts/bizinfo_filename_emergency_fix.py
