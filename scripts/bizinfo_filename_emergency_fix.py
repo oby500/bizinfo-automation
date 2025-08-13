@@ -171,13 +171,23 @@ def main():
     total_broken_files = 0
     
     for row in response.data:
-        if row.get('attachment_urls'):
+        attachments = row.get('attachment_urls')
+        if attachments:
+            # attachment_urls가 문자열인 경우 JSON 파싱
+            if isinstance(attachments, str):
+                try:
+                    attachments = json.loads(attachments)
+                    row['attachment_urls'] = attachments
+                except:
+                    continue
+            
             has_broken = False
-            for file_info in row['attachment_urls']:
-                filename = file_info.get('display_filename', '')
-                if any(p in filename for p in broken_patterns):
-                    has_broken = True
-                    total_broken_files += 1
+            for file_info in attachments:
+                if isinstance(file_info, dict):
+                    filename = file_info.get('display_filename', '')
+                    if any(p in filename for p in broken_patterns):
+                        has_broken = True
+                        total_broken_files += 1
             
             if has_broken:
                 problem_announcements.append(row)
@@ -200,6 +210,13 @@ def main():
         pblanc_nm = row.get('pblanc_nm', '')
         attachments = row['attachment_urls']
         
+        # attachment_urls가 문자열인 경우 처리
+        if isinstance(attachments, str):
+            try:
+                attachments = json.loads(attachments)
+            except:
+                continue
+        
         if idx % 10 == 0:
             print(f"\n진행: {idx}/{len(problem_announcements)}")
         
@@ -214,30 +231,31 @@ def main():
         # 파일 수정
         updated = False
         for i, attachment in enumerate(attachments):
-            filename = attachment.get('display_filename', '')
-            
-            if any(p in filename for p in broken_patterns):
-                # HTML 파일명 사용
-                if html_files and i < len(html_files):
-                    attachment['display_filename'] = html_files[i]['filename']
-                    attachment['original_filename'] = html_files[i]['filename']
-                    attachment['type'] = html_files[i]['type']
-                    updated = True
-                # 패턴 기반 수정
-                else:
-                    fixed = fix_encoding_patterns(filename)
-                    if fixed != filename:
-                        attachment['display_filename'] = fixed
-                        attachment['original_filename'] = fixed
-                        pattern_success += 1
+            if isinstance(attachment, dict):
+                filename = attachment.get('display_filename', '')
+                
+                if any(p in filename for p in broken_patterns):
+                    # HTML 파일명 사용
+                    if html_files and i < len(html_files):
+                        attachment['display_filename'] = html_files[i]['filename']
+                        attachment['original_filename'] = html_files[i]['filename']
+                        attachment['type'] = html_files[i]['type']
                         updated = True
-                    # 완전 새 파일명 생성
+                    # 패턴 기반 수정
                     else:
-                        file_type = attachment.get('type', 'FILE')
-                        new_name = generate_filename(pblanc_nm, file_type, i)
-                        attachment['display_filename'] = new_name
-                        attachment['original_filename'] = new_name
-                        updated = True
+                        fixed = fix_encoding_patterns(filename)
+                        if fixed != filename:
+                            attachment['display_filename'] = fixed
+                            attachment['original_filename'] = fixed
+                            pattern_success += 1
+                            updated = True
+                        # 완전 새 파일명 생성
+                        else:
+                            file_type = attachment.get('type', 'FILE')
+                            new_name = generate_filename(pblanc_nm, file_type, i)
+                            attachment['display_filename'] = new_name
+                            attachment['original_filename'] = new_name
+                            updated = True
         
         # DB 업데이트
         if updated:
@@ -260,11 +278,20 @@ def main():
     remaining = 0
     if response.data:
         for row in response.data:
-            if row.get('attachment_urls'):
-                for file_info in row['attachment_urls']:
-                    filename = file_info.get('display_filename', '')
-                    if any(p in filename for p in broken_patterns):
-                        remaining += 1
+            attachments = row.get('attachment_urls')
+            if attachments:
+                # attachment_urls가 문자열인 경우 처리
+                if isinstance(attachments, str):
+                    try:
+                        attachments = json.loads(attachments)
+                    except:
+                        continue
+                
+                for file_info in attachments:
+                    if isinstance(file_info, dict):
+                        filename = file_info.get('display_filename', '')
+                        if any(p in filename for p in broken_patterns):
+                            remaining += 1
     
     print(f"\n📊 최종 결과:")
     print(f"  - 처리 대상: {len(problem_announcements)}개 공고")
