@@ -3,7 +3,7 @@
 기업마당 전체 공고 첨부파일 정보 크롤링 - 속도 강화 버전
 - 멀티스레딩으로 동시 처리
 - 배치 처리 최적화
-- 연결 풀 사용
+- 파일 시그니처로 실제 타입 감지
 """
 import os
 import sys
@@ -66,25 +66,120 @@ def return_session(session):
     """세션 풀에 세션 반환"""
     session_pool.put(session)
 
-def extract_file_type(text):
-    """파일명에서 확장자 추측"""
+def get_file_type_by_signature(url, session=None):
+    """파일의 처음 몇 바이트를 읽어 실제 타입 판단"""
+    if session is None:
+        session = requests.Session()
+    
+    try:
+        # 파일의 처음 부분만 다운로드
+        headers = {'Range': 'bytes=0-2048'}
+        response = session.get(url, headers=headers, timeout=10, stream=True)
+        
+        if response.status_code in [200, 206]:
+            content = response.content[:2048]
+        else:
+            return 'UNKNOWN'
+        
+        # 파일 시그니처로 타입 판단
+        if len(content) >= 4:
+            # PDF
+            if content[:4] == b'%PDF':
+                return 'PDF'
+            # ZIP (DOCX, XLSX, PPTX도 ZIP 기반)
+            elif content[:2] == b'PK':
+                # 더 많이 읽어서 Office 파일 구분
+                if b'word/' in content:
+                    return 'DOCX'
+                elif b'xl/' in content:
+                    return 'XLSX'
+                elif b'ppt/' in content:
+                    return 'PPTX'
+                else:
+                    return 'ZIP'
+            # MS Office 97-2003
+            elif content[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+                # 확장자로 구분 필요
+                if 'Content-Disposition' in response.headers:
+                    disposition = response.headers['Content-Disposition'].lower()
+                    if '.xls' in disposition:
+                        return 'XLS'
+                    elif '.doc' in disposition:
+                        return 'DOC'
+                    elif '.ppt' in disposition:
+                        return 'PPT'
+                return 'DOC'  # 기본값
+            # HWP
+            elif content[:4] == b'\xd0\xcf\x11\xe0' or b'HWP Document' in content[:100]:
+                return 'HWP'
+            # JPEG
+            elif content[:3] == b'\xff\xd8\xff':
+                return 'JPG'
+            # PNG
+            elif content[:8] == b'\x89PNG\r\n\x1a\n':
+                return 'PNG'
+            # GIF
+            elif content[:6] in [b'GIF87a', b'GIF89a']:
+                return 'GIF'
+            # RTF
+            elif content[:5] == b'{\\rtf':
+                return 'RTF'
+            # HTML (잘못된 응답)
+            elif b'<html' in content[:100].lower() or b'<!doctype' in content[:100].lower():
+                return 'HTML'  # 나중에 HWP로 변경 예정
+        
+        return 'UNKNOWN'
+        
+    except Exception as e:
+        logging.debug(f"파일 시그니처 확인 실패: {str(e)[:30]}")
+        return 'UNKNOWN'
+
+def extract_file_type_from_text(text):
+    """텍스트에서 파일 타입 힌트 추출"""
+    if not text:
+        return 'UNKNOWN'
+    
     text_lower = text.lower()
-    if '.hwp' in text_lower or '한글' in text_lower:
+    
+    # 명확한 확장자가 있는 경우
+    if '.hwp' in text_lower or '.hwpx' in text_lower:
         return 'HWP'
     elif '.pdf' in text_lower:
         return 'PDF'
-    elif '.doc' in text_lower:
+    elif '.docx' in text_lower:
         return 'DOCX'
-    elif '.xls' in text_lower:
+    elif '.doc' in text_lower:
+        return 'DOC'
+    elif '.xlsx' in text_lower:
         return 'XLSX'
-    elif '.zip' in text_lower:
-        return 'ZIP'
+    elif '.xls' in text_lower:
+        return 'XLS'
+    elif '.pptx' in text_lower:
+        return 'PPTX'
     elif '.ppt' in text_lower:
         return 'PPT'
+    elif '.zip' in text_lower:
+        return 'ZIP'
     elif any(ext in text_lower for ext in ['.jpg', '.jpeg', '.png', '.gif']):
         return 'IMAGE'
-    else:
-        return 'UNKNOWN'
+    
+    # 텍스트 힌트
+    elif '한글' in text_lower or 'hwp' in text_lower:
+        return 'HWP'
+    elif 'pdf' in text_lower:
+        return 'PDF'
+    elif 'word' in text_lower or '워드' in text_lower:
+        return 'DOCX'
+    elif 'excel' in text_lower or '엑셀' in text_lower:
+        return 'XLSX'
+    elif 'powerpoint' in text_lower or '파워포인트' in text_lower:
+        return 'PPT'
+    elif '양식' in text_lower or '서식' in text_lower or '신청서' in text_lower:
+        return 'HWP'  # 한국 공공기관 양식은 대부분 HWP
+    elif '붙임' in text_lower or '첨부' in text_lower:
+        return 'HWP'  # 한국 공공기관 기본
+    
+    return 'UNKNOWN'
 
 def clean_filename(text):
     """파일명 정리"""
@@ -153,7 +248,22 @@ def process_single_announcement(data):
                     # 직접 URL 구성
                     direct_url = f"https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId={atch_file_id}&fileSn={file_sn}"
                     
-                    file_type = extract_file_type(text)
+                    # 파일 타입 감지 - 3단계 전략
+                    # 1. 텍스트에서 힌트 찾기
+                    file_type = extract_file_type_from_text(text)
+                    
+                    # 2. UNKNOWN이면 파일 시그니처로 확인
+                    if file_type == 'UNKNOWN':
+                        file_type = get_file_type_by_signature(direct_url, session)
+                        
+                        # 3. HTML이면 HWP로 가정 (한국 공공기관 특성)
+                        if file_type == 'HTML':
+                            # 텍스트 힌트로 다시 확인
+                            if any(keyword in text for keyword in ['양식', '서식', '신청', '계획', '붙임']):
+                                file_type = 'HWP'
+                            else:
+                                file_type = 'HWP'  # 기본값 HWP
+                    
                     display_filename = clean_filename(text) or text
                     
                     attachment = {
@@ -223,6 +333,13 @@ def update_batch_to_db(supabase, results):
                     stats['processed'] += 1
                     if attachments:
                         stats['with_attachments'] += 1
+                        # 파일 타입 로깅
+                        type_counts = {}
+                        for att in attachments:
+                            file_type = att.get('type', 'UNKNOWN')
+                            type_counts[file_type] = type_counts.get(file_type, 0) + 1
+                        if type_counts:
+                            logging.info(f"  파일 타입: {type_counts}")
                     if hashtags:
                         stats['with_hashtags'] += 1
             else:
@@ -279,10 +396,11 @@ def process_batch_parallel(batch):
 def main():
     """메인 실행 함수"""
     print("=" * 60)
-    print(" 기업마당 첨부파일 고속 크롤링")
+    print(" 기업마당 첨부파일 고속 크롤링 (파일 타입 자동 감지)")
     print("=" * 60)
     print(f"동시 처리 스레드: {MAX_WORKERS}개")
     print(f"배치 크기: {BATCH_SIZE}개")
+    print("파일 시그니처로 실제 타입 감지")
     print("=" * 60)
     
     # Supabase 연결
