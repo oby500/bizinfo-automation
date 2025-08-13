@@ -2,6 +2,7 @@
 """
 BizInfo 첨부파일 정보를 K-Startup 방식으로 업데이트
 실제 파일을 HEAD 요청 및 부분 다운로드로 확인하여 정확한 파일명과 타입 추출
+인코딩 문제 수정 버전
 """
 import os
 import sys
@@ -42,7 +43,7 @@ lock = threading.Lock()
 progress = {'success': 0, 'error': 0, 'skip': 0, 'total': 0, 'processed': 0}
 
 def extract_filename_from_disposition(disposition):
-    """Content-Disposition 헤더에서 파일명 추출"""
+    """Content-Disposition 헤더에서 파일명 추출 - 인코딩 수정 없이"""
     filename = None
     
     # filename*=UTF-8'' 형식
@@ -56,19 +57,16 @@ def extract_filename_from_disposition(disposition):
         match = re.search(r'filename="?([^";\\n]+)"?', disposition)
         if match:
             filename = match.group(1)
-            # 인코딩 문제 해결
+            # UTF-8로 디코딩 시도
             try:
-                filename = filename.encode('iso-8859-1').decode('utf-8')
+                # 이미 UTF-8인 경우 그대로 사용
+                filename.encode('utf-8')
             except:
+                # UTF-8이 아닌 경우만 변환 시도
                 try:
-                    # EUC-KR로 인코딩된 경우
-                    filename = filename.encode('iso-8859-1').decode('euc-kr')
+                    filename = filename.encode('latin-1').decode('utf-8')
                 except:
-                    try:
-                        # CP949로 시도
-                        filename = filename.encode('iso-8859-1').decode('cp949')
-                    except:
-                        pass
+                    pass
     
     return filename
 
@@ -97,9 +95,6 @@ def get_file_extension_from_content(content):
     # 텍스트 파일 체크 (UTF-8 또는 ASCII)
     try:
         content[:1000].decode('utf-8')
-        # 한글이 포함되어 있고 HTML이 아니면 대부분 HWP일 가능성
-        if '한글' in content[:1000].decode('utf-8', errors='ignore'):
-            return 'hwp'
         return 'txt'
     except:
         pass
@@ -124,32 +119,13 @@ def get_file_extension_from_content(content):
     
     return 'unknown'
 
-def fix_encoding(text):
-    """잘못된 인코딩 수정"""
-    if not text:
-        return text
-    
-    # 깨진 한글 패턴 체크
-    if any(c in text for c in ['¿', '½', '°', 'Ç', 'À', 'Ã', 'ð', 'þ']):
-        try:
-            # EUC-KR로 인코딩된 것을 잘못 읽은 경우
-            fixed = text.encode('iso-8859-1').decode('euc-kr')
-            return fixed
-        except:
-            try:
-                # CP949로 시도
-                fixed = text.encode('iso-8859-1').decode('cp949')
-                return fixed
-            except:
-                pass
-    return text
-
 def get_real_file_info(url, pblanc_id, index, current_type):
-    """실제 파일 정보 추출 (K-Startup 방식)"""
+    """실제 파일 정보 추출 (K-Startup 방식) - 인코딩 수정 없이"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': '*/*',
         'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
         'Referer': 'https://www.bizinfo.go.kr/'
     }
     
@@ -165,8 +141,6 @@ def get_real_file_info(url, pblanc_id, index, current_type):
         content_disposition = response.headers.get('Content-Disposition', '')
         if content_disposition:
             filename = extract_filename_from_disposition(content_disposition)
-            if filename:
-                filename = fix_encoding(filename)
         
         # Content-Type에서 확장자 힌트
         content_type = response.headers.get('Content-Type', '').lower()
@@ -220,7 +194,7 @@ def get_real_file_info(url, pblanc_id, index, current_type):
             if not filename or filename == '다운로드':
                 content_disposition = response.headers.get('Content-Disposition', '')
                 if content_disposition:
-                    filename = fix_encoding(extract_filename_from_disposition(content_disposition))
+                    filename = extract_filename_from_disposition(content_disposition)
         
         # 3. 파일명 생성
         if not filename or filename == '다운로드':
@@ -239,9 +213,6 @@ def get_real_file_info(url, pblanc_id, index, current_type):
             name_ext = filename.split('.')[-1].lower()
             if name_ext in ['pdf', 'hwp', 'hwpx', 'doc', 'docx', 'xlsx', 'pptx', 'zip', 'jpg', 'jpeg', 'png', 'gif', 'txt', 'csv', 'xml', 'json']:
                 extension = name_ext
-        
-        # 파일명 인코딩 최종 수정
-        filename = fix_encoding(filename)
         
         # DOC → HWP 변환 (한국 정부 사이트 특성)
         if extension == 'doc' and ('공고' in filename or '신청' in filename or '양식' in filename):
