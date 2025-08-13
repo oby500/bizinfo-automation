@@ -101,27 +101,21 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_complete_processor_fast.py
     
-    - name: Step 4 - Complete Encoding Fix (Enhanced)
+    - name: Step 4 - HTML Filename Fix (Ultimate Solution)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 4: 인코딩 문제 완전 해결 (강화 버전)"
+        echo "  STEP 4: 깨진 파일명 완전 해결 (HTML 재크롤링)"
         echo "======================================"
-        echo "🔧 이중/삼중 인코딩 복구 + 패턴 매칭"
-        echo "📝 깨진 파일명 패턴: â, ì, ë, í, ê, ã, Ã, Â"
+        echo "🔧 HTML div.file_name에서 정확한 파일명 추출"
+        echo "📝 깨진 파일명 패턴: Ã, Â, ì, í, ë, ã"
         echo "🎯 목표: 모든 파일명을 정상적인 한글로 복구"
         
-        # 기존 스크립트가 있으면 실행, 없으면 새 스크립트 실행
-        if [ -f "scripts/bizinfo_encoding_final_fix.py" ]; then
-            echo "✅ 강화된 인코딩 수정 스크립트 실행"
-            python scripts/bizinfo_encoding_final_fix.py
-        else
-            echo "⚠️ 기존 인코딩 수정 스크립트 실행"
-            python scripts/bizinfo_encoding_complete_fix.py
-        fi
+        # HTML에서 정확한 파일명 재크롤링
+        python scripts/bizinfo_html_filename_fix.py
     
     - name: Step 5 - Fix Legacy Data Issues
       env:
@@ -325,7 +319,7 @@ jobs:
             print('  STEP 1: 엑셀 데이터 수집')
             print('  STEP 2: K-Startup 방식 첨부파일 처리')
             print('  STEP 3: 첨부파일 정리')
-            print('  STEP 4: 인코딩 문제 해결 (강화 버전)')
+            print('  STEP 4: HTML 재크롤링으로 깨진 파일명 해결')
             print('  STEP 5: 레거시 데이터 문제 해결 (getImageFile 타입 등)')
             
             if today_count > 0:
