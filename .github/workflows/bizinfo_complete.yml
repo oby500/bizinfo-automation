@@ -101,21 +101,32 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_complete_processor_fast.py
     
-    - name: Step 4 - HTML Filename Fix (Ultimate Solution)
+    - name: Step 4 - Fix All Filename Issues
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 4: 깨진 파일명 완전 해결 (HTML 재크롤링)"
+        echo "  STEP 4: 깨진 파일명 완전 해결"
         echo "======================================"
-        echo "🔧 HTML div.file_name에서 정확한 파일명 추출"
-        echo "📝 깨진 파일명 패턴: Ã, Â, ì, í, ë, ã"
-        echo "🎯 목표: 모든 파일명을 정상적인 한글로 복구"
+        echo "🔧 3단계 복구 전략:"
+        echo "  1. HTML div.file_name에서 정확한 파일명 추출"
+        echo "  2. 패턴 기반 인코딩 수정"
+        echo "  3. 공고명 기반 새 파일명 생성"
+        echo ""
         
-        # HTML에서 정확한 파일명 재크롤링
-        python scripts/bizinfo_html_filename_fix.py
+        # 긴급 수정 스크립트 실행 (HTML + 패턴 + 생성)
+        if [ -f "scripts/bizinfo_filename_emergency_fix.py" ]; then
+            echo "✅ 강화된 3단계 복구 스크립트 실행"
+            python scripts/bizinfo_filename_emergency_fix.py
+        elif [ -f "scripts/bizinfo_html_filename_fix.py" ]; then
+            echo "⚠️ HTML 재크롤링 스크립트 실행"
+            python scripts/bizinfo_html_filename_fix.py
+        else
+            echo "⚠️ 기본 인코딩 수정 스크립트 실행"
+            python scripts/bizinfo_encoding_complete_fix.py
+        fi
     
     - name: Step 5 - Fix Legacy Data Issues
       env:
@@ -130,7 +141,7 @@ jobs:
         echo "  - type='getImageFile' → 실제 파일 타입으로 변환"
         echo "  - type='DOC/HTML/UNKNOWN' → 적절한 타입으로 변환"
         echo "  - 파일명='다운로드' → 실제 파일명 생성"
-        echo "📊 대상: 8월 5일 데이터 포함 전체 문제 파일 (약 3,000개)"
+        echo "📊 대상: 8월 5일 데이터 포함 전체 문제 파일"
         python scripts/bizinfo_aug5_data_fix.py
     
     - name: Generate Final Report
@@ -319,8 +330,8 @@ jobs:
             print('  STEP 1: 엑셀 데이터 수집')
             print('  STEP 2: K-Startup 방식 첨부파일 처리')
             print('  STEP 3: 첨부파일 정리')
-            print('  STEP 4: HTML 재크롤링으로 깨진 파일명 해결')
-            print('  STEP 5: 레거시 데이터 문제 해결 (getImageFile 타입 등)')
+            print('  STEP 4: 깨진 파일명 완전 해결 (3단계 복구)')
+            print('  STEP 5: 레거시 데이터 문제 해결')
             
             if today_count > 0:
                 print(f'\n✅ 오늘 {today_count}개 처리 성공!')
