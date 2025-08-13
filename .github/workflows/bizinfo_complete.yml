@@ -101,6 +101,18 @@ jobs:
         echo "======================================"
         python scripts/bizinfo_complete_processor_fast.py
     
+    - name: Step 4 - Fix Encoding Issues
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "======================================"
+        echo "  STEP 4: 인코딩 문제 수정"
+        echo "======================================"
+        echo "깨진 파일명 감지 및 복구..."
+        python scripts/bizinfo_encoding_fix.py
+    
     - name: Generate Final Report
       if: always()
       env:
@@ -149,20 +161,29 @@ jobs:
             hwp_count = 0
             pdf_count = 0
             download_count = 0
+            broken_count = 0
+            
+            # 깨진 문자 패턴
+            broken_patterns = ['â', 'ì', 'ë', 'í', 'ê', 'ã', 'ð', 'þ', 'ï', '¿', '½']
             
             for item in with_attach.data:
                 if item.get('attachment_urls') and item['attachment_urls'] != []:
                     attach_count += 1
                     for att in item['attachment_urls']:
                         file_type = att.get('type', '')
+                        filename = att.get('display_filename', '')
+                        
                         if file_type == 'DOC':
                             doc_count += 1
                         elif file_type == 'HWP':
                             hwp_count += 1
                         elif file_type == 'PDF':
                             pdf_count += 1
-                        if att.get('display_filename') == '다운로드':
+                        if filename == '다운로드':
                             download_count += 1
+                        # 깨진 파일명 체크
+                        if any(pattern in filename for pattern in broken_patterns):
+                            broken_count += 1
             
             print('\n' + '='*60)
             print('      🏢 기업마당 처리 결과 보고서')
@@ -179,6 +200,7 @@ jobs:
             print(f'   - PDF: {pdf_count}개')
             print(f'   - DOC: {doc_count}개 {"⚠️ 수정 필요" if doc_count > 0 else "✅"}')
             print(f'   - "다운로드" 파일명: {download_count}개 {"⚠️ 수정 필요" if download_count > 0 else "✅"}')
+            print(f'   - 깨진 파일명: {broken_count}개 {"⚠️ 인코딩 문제" if broken_count > 0 else "✅"}')
             
             # 최근 데이터 상태 점검
             recent = supabase.table('bizinfo_complete').select('id,attachment_urls,bsns_sumry,created_at').order('created_at', desc=True).limit(100).execute()
@@ -187,9 +209,20 @@ jobs:
                                        if item.get('attachment_urls') and item['attachment_urls'] != [])
                 recent_with_summary = sum(1 for item in recent.data 
                                         if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
+                recent_broken = 0
+                for item in recent.data:
+                    if item.get('attachment_urls'):
+                        for att in item['attachment_urls']:
+                            filename = att.get('display_filename', '')
+                            if any(pattern in filename for pattern in broken_patterns):
+                                recent_broken += 1
+                                break
+                
                 print(f'\n📌 최근 100개 데이터:')
                 print(f'   - 첨부파일 보유: {recent_with_attach}개 ({recent_with_attach}%)')
                 print(f'   - 정상 요약: {recent_with_summary}개 ({recent_with_summary}%)')
+                print(f'   - 깨진 파일명: {recent_broken}개 {"⚠️" if recent_broken > 0 else "✅"}')
+                
                 if recent_with_attach < 70:
                     print('   ⚠️ 경고: 최근 데이터 첨부파일 수집률이 낮습니다!')
                 if recent_with_summary < 70:
@@ -214,15 +247,22 @@ jobs:
             else:
                 print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
             
+            if broken_count == 0:
+                print('  ✅ 인코딩: 정상 (깨진 파일명 없음)')
+            else:
+                print(f'  ⚠️ 인코딩: {broken_count}개 파일명 깨짐 감지')
+            
             # 모드별 처리 방식 안내
             print('\n🔧 처리 방식:')
             if mode == 'daily':
                 print('  - Daily 모드: 최근 7일 데이터만 처리')
                 print('  - K-Startup 방식: HEAD 요청 + 파일 시그니처')
+                print('  - STEP 4: 인코딩 문제 자동 수정')
                 print('  - 빠른 실행 (2-5분)')
             else:
                 print('  - Full 모드: 전체 데이터 점검')
                 print('  - K-Startup 방식: 정확한 파일 타입 판별')
+                print('  - STEP 4: 깨진 파일명 전체 복구')
                 print('  - 병렬 처리 10개로 속도 개선')
             
             if today_count > 0:
