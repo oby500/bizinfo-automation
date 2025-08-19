@@ -112,7 +112,8 @@ jobs:
         echo "======================================"
         echo "  STEP 3: 첨부파일 정리"
         echo "======================================"
-        python scripts/bizinfo_complete_processor_fast.py || echo "STEP 3 실패 - 계속 진행"
+        python scripts/bizinfo_attachment_crawler.py || echo "Attachment crawler 실패 - 계속 진행"
+          python scripts/bizinfo_complete_processor_fast.py || echo "STEP 3 실패 - 계속 진행"
     
     - name: Step 4 - Fix All Filename Issues
       env:
