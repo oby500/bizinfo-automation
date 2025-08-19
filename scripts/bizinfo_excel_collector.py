@@ -199,10 +199,7 @@ def main():
                     # === 중요: 초기값 설정 ===
                     'attachment_urls': existing_attachments if existing_attachments else [],  # 빈 배열로 초기화
                     'bsns_sumry': basic_summary,  # 기본 요약 설정
-                    'attachment_processing_status': {
-                        'processed': False,
-                        'message': '상세 크롤링 대기중'
-                    }
+                    'attachment_processing_status': 'completed'
                 }
                 
                 new_records.append(record)
