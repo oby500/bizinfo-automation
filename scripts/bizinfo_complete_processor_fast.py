@@ -74,11 +74,7 @@ def process_single_announcement(item: Dict[str, Any]) -> Dict[str, Any]:
                 'id': item['id'],
                 'attachment_urls': updated_attachments,
                 'attachment_count': len(updated_attachments),
-                'attachment_processing_status': {
-                    'processed': True,
-                    'processed_at': datetime.now().isoformat(),
-                    'safe_filename_added': True
-                }
+                'attachment_processing_status': 'completed'
             }
         
         return None
