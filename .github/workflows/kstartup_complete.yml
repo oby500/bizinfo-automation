@@ -42,7 +42,7 @@ jobs:
         fi
     
     # Step 1: 수집 (모드에 따라)
-    - name: Step 1 - Daily Collection
+    - name: Step 1 - Data Collection
       if: steps.mode.outputs.mode == 'daily'
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -68,8 +68,7 @@ jobs:
       run: |
         echo "📝 Step 2: 상세 내용 병렬 파싱..."
         python scripts/kstartup_parallel_parser.py
-      continue-on-error: true
-    
+          
     # Step 3: 첨부파일 정보 처리
     - name: Step 3 - Attachment Processing
       env:
@@ -78,8 +77,7 @@ jobs:
       run: |
         echo "📎 Step 3: 첨부파일 정보 처리..."
         python scripts/kstartup_attachment_fix.py
-      continue-on-error: true
-    
+          
     - name: Generate Final Report
       if: always()
       env:
