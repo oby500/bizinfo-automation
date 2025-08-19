@@ -264,6 +264,18 @@ class KStartupCollectorFast:
                 announcement_id = f"KS_{ann.get('bizPbancSn', '')}"
                 
                 # 레코드 생성
+                # 기존 attachment_urls 보존
+                existing = self.supabase.table('kstartup_complete').select('attachment_urls').eq('pbanc_sn', ann['pbancSn']).execute()
+                
+                existing_attachments = []
+                if existing.data and len(existing.data) > 0:
+                    existing_attachments = existing.data[0].get('attachment_urls', [])
+                    if isinstance(existing_attachments, str):
+                        try:
+                            existing_attachments = json.loads(existing_attachments)
+                        except:
+                            existing_attachments = []
+                
                 record = {
                     'announcement_id': announcement_id,
                     'biz_pbanc_nm': ann.get('bizPbancNm', ''),
@@ -277,9 +289,9 @@ class KStartupCollectorFast:
                     'biz_gdnc_url': ann.get('bizGdncUrl', ''),
                     'biz_aply_url': ann.get('bizAplyUrl', ''),
                     'detl_pg_url': ann.get('detlPgUrl', ''),
-                    'attachment_urls': [],
-                    'attachment_count': 0,
-                    'attachment_processing_status': 'pending',
+                    'attachment_urls': existing_attachments if existing_attachments else [],
+                    'attachment_count': len(existing_attachments) if existing_attachments else 0,
+                    'attachment_processing_status': 'completed' if existing_attachments else 'pending',
                     'created_at': datetime.now().isoformat()
                 }
                 
