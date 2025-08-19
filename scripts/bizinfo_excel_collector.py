@@ -7,6 +7,7 @@ import pandas as pd
 import os
 import time
 from datetime import datetime
+import json
 from urllib.parse import parse_qs, urlparse
 
 def calculate_d_day(end_date_str):
@@ -196,7 +197,7 @@ def main():
                     'src_system_nm': 'github_actions',
                     'created_at': datetime.now().isoformat(),
                     # === 중요: 초기값 설정 ===
-                    'attachment_urls': [],  # 빈 배열로 초기화
+                    'attachment_urls': existing_attachments if existing_attachments else [],  # 빈 배열로 초기화
                     'bsns_sumry': basic_summary,  # 기본 요약 설정
                     'attachment_processing_status': {
                         'processed': False,
