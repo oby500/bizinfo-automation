@@ -1,0 +1,172 @@
+name: 🏢 Bizinfo Complete Workflow (Fixed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '수집 모드'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+        - daily    # 최근 데이터만
+        - full     # 전체 수집
+  schedule:
+    - cron: '30 22 * * *'  # 매일 오전 7:30 (KST)
+
+jobs:
+  process:
+    name: 기업마당 완전 자동 처리
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase python-dotenv pandas openpyxl lxml
+    
+    - name: Determine Mode
+      id: mode
+      run: |
+        if [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "mode=daily" >> $GITHUB_OUTPUT
+          echo "📅 스케줄 실행: daily 모드"
+        else
+          echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT
+          echo "🎯 수동 실행: ${{ github.event.inputs.mode || 'daily' }} 모드"
+        fi
+    
+    # Step 0: 데이터 정규화
+    - name: Step 0 - Data Normalization
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🔄 Step 0: 데이터 정규화..."
+        python scripts/normalize_bizinfo_data.py || echo "정규화 스크립트 없음"
+    
+    # Step 1: Excel 수집
+    - name: Step 1 - Excel Collection
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📊 Step 1: Excel 파일 수집..."
+        python scripts/bizinfo_excel_collector.py
+    
+    # Step 2: 크롤링 (모드에 따라)
+    - name: Step 2 - Daily Mode Crawler
+      if: steps.mode.outputs.mode == 'daily'
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🕷️ Step 2: Daily 크롤링..."
+        python scripts/bizinfo_complete_processor.py --mode daily
+    
+    - name: Step 2 - Full Mode Crawler
+      if: steps.mode.outputs.mode == 'full'
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🕷️ Step 2: Full 크롤링..."
+        python scripts/bizinfo_complete_processor.py --mode full
+    
+    # Step 3: 첨부파일 처리 (오류 시 실패 처리)
+    - name: Step 3 - Attachment Processing
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📎 Step 3: 첨부파일 처리..."
+        python scripts/improved_attachment_processor.py
+      # continue-on-error 제거
+    
+    # Step 4: 파일명 문제 수정
+    - name: Step 4 - Fix Filename Issues
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🔧 Step 4: 파일명 문제 수정..."
+        python scripts/fix_filename_issues.py || echo "파일명 수정 스크립트 없음"
+    
+    # 실패 시 알림
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "❌ 워크플로우 실패!"
+        echo "다음 단계에서 오류가 발생했습니다:"
+        echo "- Excel 수집"
+        echo "- 크롤링"
+        echo "- 첨부파일 처리"
+        echo "로그를 확인하여 문제를 해결해주세요."
+    
+    # Step 5: 최종 보고서
+    - name: Generate Final Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📋 최종 보고서 생성..."
+        python -c "
+import os
+from supabase import create_client
+from datetime import datetime
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_KEY')
+supabase = create_client(url, key)
+
+today = datetime.now().strftime('%Y-%m-%d')
+
+try:
+    # 기업마당 데이터 수
+    result = supabase.table('bizinfo_complete').select('id', count='exact').gte('created_at', today).execute()
+    bizinfo_count = result.count if result else 0
+    
+    # attachment_urls가 있는 데이터 수
+    result = supabase.table('bizinfo_complete').select('id', count='exact').neq('attachment_urls', '[]').neq('attachment_urls', '').not_.is_('attachment_urls', 'null').execute()
+    attachment_count = result.count if result else 0
+    
+    # atch_file_url이 있는 데이터 수
+    result = supabase.table('bizinfo_complete').select('id', count='exact').not_.is_('atch_file_url', 'null').execute()
+    file_url_count = result.count if result else 0
+    
+    print('=====================================')
+    print('🏢 기업마당 수집 결과')
+    print('=====================================')
+    print(f'오늘 수집: {bizinfo_count}개')
+    print(f'첨부파일 URL: {file_url_count}개')
+    print(f'첨부파일 처리: {attachment_count}개')
+    print('=====================================')
+    
+    # 성공/실패 판단
+    if bizinfo_count > 0:
+        print('✅ 수집 성공!')
+    else:
+        print('⚠️ 수집된 데이터 없음')
+    
+    # 첨부파일 처리율 계산
+    if file_url_count > 0:
+        processing_rate = (attachment_count / file_url_count) * 100
+        print(f'📊 첨부파일 처리율: {processing_rate:.1f}%')
+        
+        if processing_rate >= 80:
+            print('✅ 첨부파일 처리 우수!')
+        elif processing_rate >= 50:
+            print('⚠️ 첨부파일 처리 개선 필요')
+        else:
+            print('❌ 첨부파일 처리 문제 발생')
+    
+except Exception as e:
+    print(f'❌ 보고서 생성 오류: {e}')
+        "

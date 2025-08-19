@@ -1,0 +1,139 @@
+name: K-Startup Auto Collection (Fixed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '수집 모드'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+        - daily    # 최근 200개만
+        - full     # 전체 수집
+  schedule:
+    - cron: '0 22 * * *'  # 매일 오전 7시 (KST)
+
+jobs:
+  collect:
+    name: K-Startup 자동 처리
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4 supabase python-dotenv lxml
+    
+    - name: Determine Mode
+      id: mode
+      run: |
+        if [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "mode=daily" >> $GITHUB_OUTPUT
+          echo "📅 스케줄 실행: daily 모드"
+        else
+          echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT
+          echo "🎯 수동 실행: ${{ github.event.inputs.mode || 'daily' }} 모드"
+        fi
+    
+    # Step 1: 수집 (모드에 따라)
+    - name: Step 1 - Daily Collection
+      if: steps.mode.outputs.mode == 'daily'
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📊 Step 1: 일일 수집 모드..."
+        python scripts/kstartup_collector_fast.py --mode daily
+    
+    - name: Step 1 - Full Collection
+      if: steps.mode.outputs.mode == 'full'
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📊 Step 1: 전체 수집 모드..."
+        python scripts/kstartup_collector_fast.py --mode full
+    
+    # Step 2: 병렬 파싱
+    - name: Step 2 - Parallel Parsing
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🔄 Step 2: 병렬 파싱 처리..."
+        python scripts/kstartup_complete_processor_final.py
+    
+    # Step 3: 첨부파일 처리 (오류 시 실패 처리)
+    - name: Step 3 - Attachment Processing
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📎 Step 3: 첨부파일 정보 처리..."
+        python scripts/improved_attachment_processor.py
+      # continue-on-error 제거 - 오류 발생 시 워크플로우 실패
+    
+    # 실패 시 알림
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "❌ 워크플로우 실패!"
+        echo "첨부파일 처리 중 오류가 발생했습니다."
+        echo "로그를 확인하여 문제를 해결해주세요."
+    
+    # Step 4: 최종 보고서
+    - name: Generate Final Report
+      if: always()
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "📋 최종 보고서 생성..."
+        python -c "
+import os
+from supabase import create_client
+from datetime import datetime
+
+url = os.environ.get('SUPABASE_URL')
+key = os.environ.get('SUPABASE_KEY')
+supabase = create_client(url, key)
+
+# 오늘 수집된 데이터 수 확인
+today = datetime.now().strftime('%Y-%m-%d')
+
+try:
+    # K-Startup 데이터 수
+    result = supabase.table('kstartup_complete').select('id', count='exact').gte('created_at', today).execute()
+    kstartup_count = result.count if result else 0
+    
+    # attachment_urls가 있는 데이터 수
+    result = supabase.table('kstartup_complete').select('id', count='exact').neq('attachment_urls', '[]').neq('attachment_urls', '').not_.is_('attachment_urls', 'null').execute()
+    attachment_count = result.count if result else 0
+    
+    print('=====================================')
+    print('📊 K-Startup 수집 결과')
+    print('=====================================')
+    print(f'오늘 수집: {kstartup_count}개')
+    print(f'첨부파일 처리: {attachment_count}개')
+    print('=====================================')
+    
+    # 성공/실패 판단
+    if kstartup_count > 0:
+        print('✅ 수집 성공!')
+    else:
+        print('⚠️ 수집된 데이터 없음')
+    
+    if attachment_count > 0:
+        print('✅ 첨부파일 처리 성공!')
+    else:
+        print('⚠️ 첨부파일 처리 필요')
+        
+except Exception as e:
+    print(f'❌ 보고서 생성 오류: {e}')
+        "

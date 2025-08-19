@@ -1,0 +1,117 @@
+name: K-Startup Auto Collection
+
+on:
+  schedule:
+    # 매일 오전 9시 실행 (UTC 00:00 = KST 09:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  collect-kstartup:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+        pip install supabase
+        pip install python-dotenv
+        pip install beautifulsoup4
+        pip install lxml
+    
+    - name: Create .env file
+      run: |
+        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+    
+    # Step 1: 기본 데이터 수집 (배치 처리)
+    - name: Collect K-Startup data (Batch)
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "🚀 K-Startup 데이터 수집 시작..."
+        python collect_kstartup_batch.py
+      continue-on-error: true
+    
+    # Step 2: bsns_sumry 병렬 파싱 (상세 내용 크롤링)
+    - name: Parse business summaries in parallel
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "📝 상세 내용 파싱 시작..."
+        python kstartup_parallel_parser.py
+      continue-on-error: true
+    
+    # Step 3: 첨부파일 정보 처리
+    - name: Process attachment information
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "📎 첨부파일 정보 처리..."
+        python kstartup_attachment_fix.py
+      continue-on-error: true
+    
+    # Step 4: 수집 결과 확인
+    - name: Verify collection results
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "📊 수집 결과 확인..."
+        python -c "
+        from supabase import create_client
+        import os
+        from datetime import datetime
+        
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_KEY')
+        supabase = create_client(url, key)
+        
+        # 전체 개수 확인
+        result = supabase.table('kstartup_complete').select('announcement_id').execute()
+        total = len(result.data) if result.data else 0
+        
+        # 오늘 수집된 개수
+        today = datetime.now().strftime('%Y-%m-%d')
+        today_result = supabase.table('kstartup_complete').select('announcement_id').gte('created_at', today).execute()
+        today_count = len(today_result.data) if today_result.data else 0
+        
+        # 상태별 개수
+        status_result = supabase.table('kstartup_complete').select('status').execute()
+        status_counts = {}
+        if status_result.data:
+            for item in status_result.data:
+                status = item.get('status', '상태미정')
+                status_counts[status] = status_counts.get(status, 0) + 1
+        
+        print('='*60)
+        print('📊 K-Startup 수집 완료 보고서')
+        print('='*60)
+        print(f'총 저장된 공고: {total}개')
+        print(f'오늘 수집/업데이트: {today_count}개')
+        print('')
+        print('상태별 분포:')
+        for status, count in sorted(status_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f'  - {status}: {count}개')
+        print('='*60)
+        "
+    
+    # Step 5: 실행 완료 알림
+    - name: Send completion notification
+      if: always()
+      run: |
+        echo "✅ K-Startup 자동 수집 완료"
+        echo "실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "배치 처리 + 병렬 파싱 + 첨부파일 처리 완료"
