@@ -32,12 +32,13 @@ def main():
     # 기본 API URL (실제 API가 없으므로 더미 데이터)
     sample_data = [
         {
-            'pblanc_id': f'BIZ_{datetime.now().strftime("%Y%m%d")}001',
+            'pblanc_id': f'PBLN_{datetime.now().strftime("%Y%m%d")}001',
             'pblanc_nm': '2025년 스타트업 지원사업',
-            'jrsd_instt_nm': '중소벤처기업부',
-            'bsnspbanc_ctnt': '스타트업 성장 지원',
-            'rqutpbanc_end_dt': '2025-03-31',
-            'status': '모집중',
+            'organ_nm': '중소벤처기업부',
+            'bsns_sumry': '스타트업 성장 지원 프로그램',
+            'bsns_title': '2025년 스타트업 지원사업',
+            'reqst_end_ymd': '2025-03-31',
+            'announcement_id': f'PBLN_{datetime.now().strftime("%Y%m%d")}001',
             'created_at': datetime.now().isoformat()
         }
     ]
