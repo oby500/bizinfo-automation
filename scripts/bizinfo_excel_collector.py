@@ -197,9 +197,9 @@ def main():
                     'src_system_nm': 'github_actions',
                     'created_at': datetime.now().isoformat(),
                     # === 중요: 초기값 설정 ===
-                    'attachment_urls': existing_attachments if existing_attachments else [],  # 빈 배열로 초기화
+                    'attachment_urls': [],  # 빈 배열로 초기화
                     'bsns_sumry': basic_summary,  # 기본 요약 설정
-                    'attachment_processing_status': 'completed'
+                    'attachment_processing_status': 'pending'  # 첨부파일 처리 대기
                 }
                 
                 new_records.append(record)
