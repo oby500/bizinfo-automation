@@ -5,6 +5,15 @@ on:
     # 매일 오전 9시 실행 (UTC 00:00 = KST 09:00)
     - cron: '0 0 * * *'
   workflow_dispatch: # 수동 실행 버튼
+    inputs:
+      mode:
+        description: '수집 모드'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+        - daily    # 최근 데이터만
+        - full     # 전체 수집
 
 jobs:
   collect-kstartup:
@@ -27,56 +36,47 @@ jobs:
         pip install python-dotenv
         pip install beautifulsoup4
         pip install lxml
+        pip install pandas
+        pip install openpyxl
+    
+    - name: Determine Mode
+      id: mode
+      run: |
+        if [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "mode=daily" >> $GITHUB_OUTPUT
+          echo "📅 스케줄 실행: daily 모드"
+        else
+          echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT
+          echo "🎯 수동 실행: ${{ github.event.inputs.mode || 'daily' }} 모드"
+        fi
     
     - name: Create .env file
       run: |
-        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
-        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+        # 개발 환경 사용 (현재 사용 중)
+        echo "SUPABASE_URL=https://csuziaogycciwgxxmahm.supabase.co" >> .env
+        echo "SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXppYW9neWNjaXdneHhtYWhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzYxNTc4MCwiZXhwIjoyMDY5MTkxNzgwfQ.HnhM7zSLzi7lHVPd2IVQKIACDq_YA05mBMgZbSN1c9Q" >> .env
+        echo "COLLECTION_MODE=${{ steps.mode.outputs.mode }}" >> .env
     
-    # Step 1: 기본 데이터 수집 (배치 처리)
-    - name: Collect K-Startup data (Batch)
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    # Step 1: 실제 K-Startup 데이터 수집
+    - name: Collect K-Startup Data
       run: |
-        echo "🚀 K-Startup 데이터 수집 시작..."
-        python collect_kstartup_batch.py
-      continue-on-error: true
-    
-    # Step 2: bsns_sumry 병렬 파싱 (상세 내용 크롤링)
-    - name: Parse business summaries in parallel
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      run: |
-        echo "📝 상세 내용 파싱 시작..."
-        python kstartup_parallel_parser.py
-      continue-on-error: true
-    
-    # Step 3: 첨부파일 정보 처리
-    - name: Process attachment information
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      run: |
-        echo "📎 첨부파일 정보 처리..."
-        python kstartup_attachment_fix.py
+        echo "🚀 K-Startup 실제 데이터 수집 시작..."
+        python scripts/kstartup_real_collector.py
       continue-on-error: true
     
     # Step 4: 수집 결과 확인
     - name: Verify collection results
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
         echo "📊 수집 결과 확인..."
         python -c "
         from supabase import create_client
         import os
         from datetime import datetime
+        from dotenv import load_dotenv
         
-        url = os.environ.get('SUPABASE_URL')
-        key = os.environ.get('SUPABASE_KEY')
+        load_dotenv()
+        url = os.getenv('SUPABASE_URL')
+        key = os.getenv('SUPABASE_KEY')
         supabase = create_client(url, key)
         
         # 전체 개수 확인
@@ -108,10 +108,22 @@ jobs:
         print('='*60)
         "
     
-    # Step 5: 실행 완료 알림
+    # Step 5: Edge Function 트리거 (추가 처리)
+    - name: Trigger Edge Function
+      if: success()
+      run: |
+        echo "🔗 Supabase Edge Function 트리거 중..."
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          "${{ secrets.SUPABASE_URL }}/functions/v1/bizinfo-auto-collector" \
+          -d '{"trigger_source": "github_actions", "mode": "${{ steps.mode.outputs.mode }}"}'
+      continue-on-error: true
+    
+    # Step 6: 실행 완료 알림
     - name: Send completion notification
       if: always()
       run: |
         echo "✅ K-Startup 자동 수집 완료"
         echo "실행 시간: $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "배치 처리 + 병렬 파싱 + 첨부파일 처리 완료"
+        echo "GitHub Actions + Edge Function 연동 완료"
