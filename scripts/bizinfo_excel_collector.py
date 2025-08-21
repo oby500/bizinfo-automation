@@ -195,7 +195,7 @@ def main():
                     'dtl_url': dtl_url,
                     'regist_dt': str(row.get('등록일자', '')),
                     'src_system_nm': 'github_actions',
-                    'created_at': datetime.now().isoformat(),
+                    # created_at은 Supabase에서 자동 설정됨 (제거)
                     # === 중요: 초기값 설정 ===
                     'attachment_urls': [],  # 빈 배열로 초기화
                     'bsns_sumry': basic_summary,  # 기본 요약 설정
