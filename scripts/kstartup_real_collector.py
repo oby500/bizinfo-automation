@@ -86,27 +86,21 @@ def create_kstartup_data(field_data):
         
         announcement_id = f"KS_{pbanc_sn}"
         
-        # 데이터 구성
+        # 데이터 구성 (실제 데이터베이스 스키마에 맞춤)
         data = {
             'announcement_id': announcement_id,
-            'title': biz_pbanc_nm,
-            'business_summary': field_data.get('pbanc_ctnt', ''),           # 공고내용
-            'organization': field_data.get('pbanc_ntrp_nm', ''),            # 공고기업명
-            'organization_type': field_data.get('sprv_inst', ''),           # 감독기관
-            'application_start_date': field_data.get('pbanc_rcpt_bgng_dt', ''),  # 공고접수시작일
-            'application_end_date': field_data.get('pbanc_rcpt_end_dt', ''),     # 공고접수종료일
-            'target_category': field_data.get('aply_trgt', ''),             # 신청대상
-            'target_description': field_data.get('aply_trgt_ctnt', ''),     # 신청대상내용
-            'region': field_data.get('supt_regin', ''),                     # 지원지역
-            'support_type': field_data.get('supt_biz_clsfc', ''),           # 지원사업분류
-            'contact_phone': field_data.get('prch_cnpl_no', ''),            # 조달연락처번호
-            'detail_url': field_data.get('detl_pg_url', ''),                # 상세페이지URL
-            'application_url': field_data.get('aply_mthd_onli_rcpt_istc', ''),  # 신청방법온라인접수기관
-            'guidance_url': field_data.get('biz_gdnc_url', ''),             # 사업안내URL
-            'target_stage': field_data.get('biz_enyy', ''),                 # 사업연혁
+            'biz_pbanc_nm': biz_pbanc_nm,                                   # 사업공고명
+            'pbanc_ctnt': field_data.get('pbanc_ctnt', ''),                # 공고내용
+            'pbanc_ntrp_nm': field_data.get('pbanc_ntrp_nm', ''),          # 공고기업명
+            'supt_biz_clsfc': field_data.get('supt_biz_clsfc', ''),        # 지원사업분류
+            'aply_trgt_ctnt': field_data.get('aply_trgt_ctnt', ''),        # 신청대상내용
+            'supt_regin': field_data.get('supt_regin', ''),                # 지원지역
+            'pbanc_rcpt_bgng_dt': field_data.get('pbanc_rcpt_bgng_dt', ''), # 공고접수시작일
+            'pbanc_rcpt_end_dt': field_data.get('pbanc_rcpt_end_dt', ''),  # 공고접수종료일
+            'biz_gdnc_url': field_data.get('biz_gdnc_url', ''),            # 사업안내URL
+            'detl_pg_url': field_data.get('detl_pg_url', ''),              # 상세페이지URL
             'status': '접수중' if field_data.get('rcrt_prgs_yn', '') == 'Y' else '마감',
-            'collected_at': datetime.now().isoformat(),
-            'collection_mode': COLLECTION_MODE
+            'created_at': datetime.now().isoformat()
         }
         
         return data
