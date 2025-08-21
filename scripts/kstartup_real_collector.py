@@ -48,221 +48,182 @@ def fetch_detail_info(detail_url):
         response = requests.get(detail_url, timeout=10)
         html = response.text
         
-        # 기본값
-        result = {
-            'applicationStartDate': '',
-            'applicationEndDate': '',
-            'supportTarget': '',
-            'supportContent': '',
-            'attachmentLinks': ''
+        info = {
+            'pbanc_rcpt_bgng_dt': None,
+            'pbanc_rcpt_end_dt': None, 
+            'sprt_cnts': None,
+            'attachment_urls': []
         }
         
-        # 1. JavaScript 변수에서 날짜 추출 (가장 정확한 방법)
-        js_dates = re.findall(r"getDayOfTheWeek\('(\d{4})\.(\d{1,2})\.(\d{1,2})", html)
-        if len(js_dates) >= 2:
-            # 시작일과 종료일 모두 찾은 경우
-            year1, month1, day1 = js_dates[0]
-            year2, month2, day2 = js_dates[1]
-            result['applicationStartDate'] = f"{year1}-{pad_number(month1)}-{pad_number(day1)}"
-            result['applicationEndDate'] = f"{year2}-{pad_number(month2)}-{pad_number(day2)}"
-        elif len(js_dates) == 1:
-            # 하나만 찾은 경우 시작일로 설정
-            year1, month1, day1 = js_dates[0]
-            result['applicationStartDate'] = f"{year1}-{pad_number(month1)}-{pad_number(day1)}"
-            
-            # 추가 날짜 패턴 검색
-            additional_dates = re.findall(r"(\d{4})\.(\d{1,2})\.(\d{1,2})", html)
-            if len(additional_dates) >= 2:
-                year2, month2, day2 = additional_dates[1]
-                result['applicationEndDate'] = f"{year2}-{pad_number(month2)}-{pad_number(day2)}"
+        # 기간 추출 (여러 패턴 시도)
+        date_patterns = [
+            r'접수기간.*?(\d{4}[-\.]\d{2}[-\.]\d{2}).*?(\d{4}[-\.]\d{2}[-\.]\d{2})',
+            r'신청기간.*?(\d{4}[-\.]\d{2}[-\.]\d{2}).*?(\d{4}[-\.]\d{2}[-\.]\d{2})',
+            r'(\d{4}[-\.]\d{2}[-\.]\d{2}).*?~.*?(\d{4}[-\.]\d{2}[-\.]\d{2})'
+        ]
         
-        # JavaScript에서 찾지 못했다면 기존 HTML 패턴 사용
-        if not result['applicationStartDate']:
-            # 공백 제거
-            cleaned_html = re.sub(r'\s+', '', html).replace('&nbsp;', '')
-            
-            # 2. HTML에서 YYYY.MM.DD ~ YYYY.MM.DD 패턴
-            date_match = re.search(r'(20\d{2})[.\-/년](\d{1,2})[.\-/월](\d{1,2})[일]?[^\d]*(20\d{2})[.\-/년](\d{1,2})[.\-/월](\d{1,2})[일]?', cleaned_html)
-            if date_match:
-                result['applicationStartDate'] = f"{date_match.group(1)}-{pad_number(date_match.group(2))}-{pad_number(date_match.group(3))}"
-                result['applicationEndDate'] = f"{date_match.group(4)}-{pad_number(date_match.group(5))}-{pad_number(date_match.group(6))}"
-            else:
-                # 3. MM.DD ~ MM.DD 패턴 (현재 연도)
-                date_match2 = re.search(r'(\d{1,2})[.\-/월](\d{1,2})[일]?[~\-](\d{1,2})[.\-/월](\d{1,2})[일]?', cleaned_html)
-                if date_match2:
-                    current_year = datetime.now().year
-                    result['applicationStartDate'] = f"{current_year}-{pad_number(date_match2.group(1))}-{pad_number(date_match2.group(2))}"
-                    result['applicationEndDate'] = f"{current_year}-{pad_number(date_match2.group(3))}-{pad_number(date_match2.group(4))}"
-        
-        # 지원대상 추출
-        target_match = re.search(r'지원대상\s*:?([\s\S]*?)</div>', html, re.IGNORECASE)
-        if target_match:
-            result['supportTarget'] = clean_text(target_match.group(1))
+        for pattern in date_patterns:
+            match = re.search(pattern, html, re.DOTALL)
+            if match:
+                start_date = match.group(1).replace('.', '-')
+                end_date = match.group(2).replace('.', '-')
+                info['pbanc_rcpt_bgng_dt'] = start_date
+                info['pbanc_rcpt_end_dt'] = end_date
+                break
         
         # 지원내용 추출
-        content_match = re.search(r'지원내용\s*:?([\s\S]*?)</div>', html, re.IGNORECASE)
-        if content_match:
-            result['supportContent'] = clean_text(content_match.group(1))
+        sprt_patterns = [
+            r'지원내용[:\s]*([^<\n]{20,200})',
+            r'지원규모[:\s]*([^<\n]{20,200})',
+            r'지원금액[:\s]*([^<\n]{20,200})'
+        ]
         
-        # 첨부파일 링크 추출
-        attachment_matches = re.findall(r'<a[^>]*href="([^"]+)"[^>]*download', html, re.IGNORECASE)
-        if attachment_matches:
-            base_url = "https://www.k-startup.go.kr"
-            result['attachmentLinks'] = ", ".join([base_url + link for link in attachment_matches])
+        for pattern in sprt_patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                info['sprt_cnts'] = clean_text(match.group(1))
+                break
         
-        return result
+        # 첨부파일 추출
+        file_patterns = [
+            r'href="([^"]*\.(pdf|hwp|doc|docx|xls|xlsx)[^"]*)"[^>]*>([^<]+)',
+            r'onclick="[^"]*download[^"]*\([\'"]([^\'"]*)[\'"][^>]*>([^<]+)'
+        ]
+        
+        for pattern in file_patterns:
+            matches = re.findall(pattern, html, re.IGNORECASE)
+            for match in matches:
+                if len(match) >= 2:
+                    url = match[0] if match[0].startswith('http') else f"https://www.k-startup.go.kr{match[0]}"
+                    filename = match[2] if len(match) > 2 else match[1]
+                    file_ext = url.split('.')[-1].upper() if '.' in url else 'UNKNOWN'
+                    
+                    info['attachment_urls'].append({
+                        'url': url,
+                        'filename': clean_text(filename),
+                        'type': file_ext
+                    })
+        
+        return info
         
     except Exception as e:
-        print(f"❌ 상세페이지 파싱 실패: {detail_url} - {e}")
-        return {
-            'applicationStartDate': '',
-            'applicationEndDate': '',
-            'supportTarget': '',
-            'supportContent': '',
-            'attachmentLinks': ''
-        }
+        print(f"    ❌ 상세정보 추출 실패: {e}")
+        return None
 
-def collect_kstartup_data():
-    """K-Startup 데이터 수집 메인 함수"""
-    print("="*60)
+def main():
+    """메인 실행 함수"""
+    print("=" * 60)
     print("🚀 K-Startup 실제 데이터 수집 시작")
-    print("="*60)
+    print("=" * 60)
     
-    # 수집 모드 확인
-    collection_mode = os.getenv('COLLECTION_MODE', 'daily')
-    print(f"📋 수집 모드: {collection_mode}")
+    # 환경변수 확인
+    SUPABASE_URL = os.getenv('SUPABASE_URL')
+    SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+    COLLECTION_MODE = os.getenv('COLLECTION_MODE', 'daily').lower()
     
-    if collection_mode == 'daily':
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("❌ 환경변수 누락: SUPABASE_URL, SUPABASE_KEY")
+        return
+    
+    print(f"📊 수집 모드: {COLLECTION_MODE}")
+    print(f"🔗 Supabase URL: {SUPABASE_URL[:30]}...")
+    
+    # Supabase 연결
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase 연결 성공")
+    except Exception as e:
+        print(f"❌ Supabase 연결 실패: {e}")
+        return
+    
+    # 기존 데이터 조회 (중복 체크용)
+    try:
+        existing_result = supabase.table('kstartup_complete').select('announcement_id').execute()
+        # 뒤 6자리만 추출하여 집합으로 저장
+        existing_ids = set()
+        for row in existing_result.data:
+            aid = str(row['announcement_id'])
+            # 뒤 6자리 숫자만 추출 (KS_ 접두사 제거)
+            if len(aid) >= 6:
+                last_6 = aid[-6:] if aid[-6:].isdigit() else aid
+                existing_ids.add(last_6)
+        
+        print(f"📋 기존 데이터: {len(existing_ids)}개 (뒤 6자리 기준)")
+    except Exception as e:
+        print(f"❌ 기존 데이터 조회 실패: {e}")
+        existing_ids = set()
+    
+    # 수집 모드별 설정
+    if COLLECTION_MODE == 'daily':
         print("📅 Daily 모드: 최신 데이터 확인")
         max_duplicate_count = 50  # 연속 중복 50개면 종료
         max_pages = 5  # 5페이지까지 확인 (1000개)
         min_check_count = 0  # 최소 검토 개수 제한 없음
     else:
         print("🔄 Full 모드: 전체 데이터 수집")
-        max_duplicate_count = 50  # 중복 50건에서 중지 
-        max_pages = 100  # 최대 100페이지
-        min_check_count = 0  # 제한 없음
-    
-    # Supabase 연결
-    SUPABASE_URL = os.getenv('SUPABASE_URL')
-    SUPABASE_KEY = os.getenv('SUPABASE_KEY')
-    
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        print("❌ Supabase 환경변수가 설정되지 않았습니다.")
-        return
-    
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Supabase 연결 성공")
-    
-    # 기존 공고ID 조회 (뒤 6자리만 추출하여 비교)
-    try:
-        existing_result = supabase.table('kstartup_complete').select('announcement_id').execute()
-        existing_ids = set()
-        if existing_result.data:
-            # announcement_id에서 뒤 6자리 숫자만 추출 (KS_ 접두사 무시)
-            for item in existing_result.data:
-                if item.get('announcement_id'):
-                    full_id = str(item['announcement_id']).strip()
-                    # 뒤에서 6자리 숫자 추출 (예: "KS_174689" → "174689", "174689" → "174689")
-                    if len(full_id) >= 6:
-                        last_6_digits = full_id[-6:]
-                        if last_6_digits.isdigit():
-                            existing_ids.add(last_6_digits)
-        print(f"📋 기존 공고 수: {len(existing_ids)}개 (뒤 6자리 기준)")
-    except Exception as e:
-        print(f"⚠️ 기존 데이터 조회 실패, 계속 진행: {e}")
-        existing_ids = set()
-    
-    # API 설정 - HTTP로 시도
-    service_key = "rHwfm51FIrtIJjqRL2fJFJFvNsVEng7v7Ud0T44EKQpgKoMEJmN06LZ+KQ2wbTfW29XZSm8OzMuNCUQi+MTlsQ=="
-    base_url = "http://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
+        max_duplicate_count = 200  # 연속 중복 200개면 종료
+        max_pages = 50  # 50페이지까지 확인 (10000개)
+        min_check_count = 100  # 최소 100개는 검토
     
     # 데이터 수집
-    page = 1
-    per_page = 200  # 구글시트와 동일하게 200개씩
-    duplicate_count = 0  # 연속 중복 카운트
+    base_url = "https://www.k-startup.go.kr/api/apisvc/xml/GetPblancListSvc"
     new_items = []
-    total_checked = 0  # 총 검토한 데이터 수
+    duplicate_count = 0
+    total_checked = 0
     
-    while True:
-        print(f"\n📄 페이지 {page} 수집 중...")
-        
-        params = {
-            'ServiceKey': service_key,  # 대문자 S
-            'page': page,               # page로 수정 (pageNo가 아님)
-            'perPage': per_page         # perPage로 수정 (numOfRows가 아님)
-        }
+    print(f"\n🔍 최대 {max_pages}페이지, 연속 중복 {max_duplicate_count}개까지 확인")
+    
+    for page in range(1, max_pages + 1):
+        print(f"\n📄 페이지 {page} 처리 중...")
         
         try:
-            # SSL 검증 우회 및 헤더 추가
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/xml, text/xml, */*',
-                'Connection': 'keep-alive'
+            params = {
+                'page': page,
+                'perPage': 200,  # 구글시트와 동일하게 200개
+                'sortColumn': 'REG_YMD',
+                'sortDirection': 'DESC'
             }
             
-            response = requests.get(base_url, params=params, headers=headers, timeout=30, verify=False)
+            response = requests.get(base_url, params=params, timeout=30, verify=False)
             
             if response.status_code != 200:
-                print(f"❌ HTTP 오류: {response.status_code}")
-                break
+                print(f"  ❌ HTTP 오류: {response.status_code}")
+                continue
             
             # XML 파싱
             root = ET.fromstring(response.text)
+            items = []
             
-            # data/item 구조 확인
-            data_element = root.find('data')
-            if data_element is None:
-                print("❌ XML에서 data 요소를 찾을 수 없습니다.")
-                break
-                
-            items = data_element.findall('item')
+            # 아이템 찾기 (다양한 태그명 시도)
+            for tag in ['item', 'items', 'pblanc']:
+                found_items = root.findall(f".//{tag}")
+                if found_items:
+                    items = found_items
+                    break
             
-            if len(items) == 0:
-                print(f"✅ 페이지 {page}: 데이터 없음 - 수집 완료")
-                break
+            if not items:
+                print(f"  ⚠️ 페이지 {page}: 아이템 없음")
+                continue
             
-            print(f"📊 페이지 {page}: {len(items)}개 항목 발견")
+            print(f"  📊 페이지 {page}: {len(items)}개 아이템 발견")
             
+            # 각 아이템 처리
             for item in items:
-                cols = item.findall('col')
-                total_checked += 1  # 검토한 데이터 수 증가
+                total_checked += 1
                 
-                # 데이터 추출
-                row_data = {
-                    'id': '',
-                    'title': '',
-                    'org': '',
-                    'supervisor': '',
-                    'executor': '',
-                    'url': ''
-                }
+                # ID 추출
+                id_elem = item.find('pblancId') or item.find('pblanc_id') or item.find('id')
+                if id_elem is None or not id_elem.text:
+                    continue
                 
-                for col in cols:
-                    name_attr = col.get('name')
-                    value = col.text or ''
-                    
-                    if name_attr == 'pbanc_sn':
-                        row_data['id'] = value
-                    elif name_attr == 'biz_pbanc_nm':
-                        row_data['title'] = value
-                    elif name_attr == 'pbanc_ntrp_nm':
-                        row_data['org'] = value
-                    elif name_attr == 'sprv_inst':
-                        row_data['supervisor'] = value
-                    elif name_attr == 'biz_prch_dprt_nm':
-                        row_data['executor'] = value
-                    elif name_attr == 'detl_pg_url':
-                        row_data['url'] = value
-                
-                # 중복 체크 (뒤 6자리만 비교)
-                id_trimmed = str(row_data['id']).strip()
-                # API ID에서도 뒤 6자리만 추출
+                id_text = str(id_elem.text).strip()
+                # 뒤 6자리만 추출
+                id_trimmed = id_text.replace('KS_', '').replace('ks_', '')
                 id_last_6 = id_trimmed[-6:] if len(id_trimmed) >= 6 and id_trimmed[-6:].isdigit() else id_trimmed
                 
                 if id_last_6 in existing_ids:
                     duplicate_count += 1
-                    print(f"⚠️ 중복: {id_trimmed} → {id_last_6} ({duplicate_count}연속)")
+                    print(f"  ⚠️ 중복: {id_trimmed} → {id_last_6} ({duplicate_count}연속)")
                     
                     # 연속 중복이 max_duplicate_count에 도달하면 종료
                     if duplicate_count >= max_duplicate_count:
@@ -270,91 +231,86 @@ def collect_kstartup_data():
                         break
                     continue
                 
-                # URL 검증
-                if not row_data['url'] or not row_data['url'].strip():
-                    print(f"⚠️ URL 누락 - 건너뜀: {row_data['id']}")
-                    continue
-                
                 duplicate_count = 0  # 새 데이터 발견 시 리셋
-                existing_ids.add(id_last_6)  # 중복 방지용 추가 (뒤 6자리만)
                 
-                # 상세 정보 수집
-                print(f"🔍 상세 정보 수집: {id_trimmed}")
-                detail_info = fetch_detail_info(row_data['url'])
+                # 새 데이터 처리
+                title_elem = item.find('pblancNm') or item.find('pblanc_nm') or item.find('title')
+                title = title_elem.text if title_elem is not None else "제목 없음"
                 
-                # 수집 시간
-                collected_time = format_date_time(datetime.now())
+                print(f"  ✅ 새 데이터: {id_trimmed} - {title[:30]}...")
                 
-                # 데이터 구성 (기존 테이블 컬럼명에 맞춤)
-                new_item = {
-                    'announcement_id': row_data['id'],
-                    'biz_pbanc_nm': row_data['title'],
-                    'pbanc_ntrp_nm': row_data['org'],
-                    'spnsr_organ_nm': row_data['supervisor'],
-                    'exctv_organ_nm': row_data['executor'],
-                    'extraction_date': collected_time,
-                    'aply_trgt_ctnt': detail_info['supportTarget'],
-                    'pbanc_ctnt': detail_info['supportContent'],
-                    'attachment_urls': detail_info['attachmentLinks'],
-                    'detl_pg_url': row_data['url'],
-                    'status': '수집완료',
-                    'created_at': collected_time
+                # 상세 URL 생성
+                detail_url = f"https://www.k-startup.go.kr/homepage/businessManage/businessManageDetail.do?bizPblancId={id_text}"
+                
+                # 상세정보 추출
+                detail_info = fetch_detail_info(detail_url)
+                
+                # 기본 데이터 구성
+                item_data = {
+                    'announcement_id': id_text,
+                    'biz_pbanc_nm': clean_text(title),
+                    'detail_url': detail_url,
+                    'collected_at': format_date_time(datetime.now())
                 }
                 
-                # 날짜 필드는 빈 값이 아닐 때만 추가 (올바른 컬럼명 사용)
-                if detail_info['applicationStartDate']:
-                    new_item['pbanc_rcpt_bgng_dt'] = detail_info['applicationStartDate']
-                if detail_info['applicationEndDate']:
-                    new_item['pbanc_rcpt_end_dt'] = detail_info['applicationEndDate']
+                # 상세정보 병합
+                if detail_info:
+                    item_data.update(detail_info)
                 
-                new_items.append(new_item)
-                print(f"✅ 수집 완료: {row_data['title'][:30]}...")
+                new_items.append(item_data)
+                existing_ids.add(id_last_6)  # 중복 체크용 추가
                 
-                # 요청 간 딜레이
-                time.sleep(0.1)
+                if len(new_items) >= 100:  # 한 번에 너무 많이 수집 방지
+                    print(f"  🎯 100개 수집 완료 - 배치 저장")
+                    break
             
             # 연속 중복으로 종료된 경우
             if duplicate_count >= max_duplicate_count:
                 break
-            
-            # 페이지 제한 체크
-            if page >= max_pages:
-                print(f"📄 최대 페이지 수 ({max_pages}) 도달 - 수집 종료")
-                break
                 
-            page += 1
-            
         except Exception as e:
-            print(f"❌ 페이지 {page} 처리 오류: {e}")
-            break
+            print(f"  ❌ 페이지 {page} 처리 실패: {e}")
+            continue
     
-    # 데이터베이스 저장
+    # 결과 요약
+    print("\n" + "=" * 60)
+    print("📊 수집 결과")
+    print("=" * 60)
+    print(f"🔍 총 검토: {total_checked}개")
+    print(f"✅ 새 데이터: {len(new_items)}개")
+    print(f"⚠️ 최종 중복: {duplicate_count}연속")
+    
+    # 데이터 저장
     if new_items:
-        print(f"\n💾 데이터베이스에 {len(new_items)}개 저장 중...")
+        print(f"\n💾 Supabase에 {len(new_items)}개 저장 중...")
         try:
-            # 배치로 삽입
-            batch_size = 10
-            for i in range(0, len(new_items), batch_size):
-                batch = new_items[i:i+batch_size]
-                result = supabase.table('kstartup_complete').insert(batch).execute()
-                print(f"📝 배치 {i//batch_size + 1}: {len(batch)}개 저장 완료")
-                time.sleep(0.5)  # 배치 간 딜레이
+            # 배치로 저장 (100개씩)
+            batch_size = 100
+            saved_count = 0
             
-            print(f"✅ 총 {len(new_items)}개 새로운 공고 저장 완료!")
+            for i in range(0, len(new_items), batch_size):
+                batch = new_items[i:i + batch_size]
+                result = supabase.table('kstartup_complete').insert(batch).execute()
+                saved_count += len(batch)
+                print(f"  📦 배치 {i//batch_size + 1}: {len(batch)}개 저장")
+            
+            print(f"✅ 총 {saved_count}개 저장 완료!")
+            
+            # 최신 데이터 샘플 출력
+            print(f"\n📋 저장된 데이터 샘플:")
+            for i, item in enumerate(new_items[:3]):
+                print(f"  {i+1}. {item['announcement_id']} - {item['biz_pbanc_nm'][:40]}...")
+                if item.get('attachment_urls'):
+                    print(f"     📎 첨부파일: {len(item['attachment_urls'])}개")
             
         except Exception as e:
-            print(f"❌ 데이터베이스 저장 오류: {e}")
+            print(f"❌ 저장 실패: {e}")
     else:
-        print("ℹ️ 저장할 새로운 데이터가 없습니다.")
+        print("ℹ️ 저장할 새 데이터가 없습니다.")
     
-    print("\n" + "="*60)
-    print("🎉 K-Startup 수집 완료")
-    print(f"📊 총 검토: {total_checked}개")
-    print(f"📊 새로운 공고: {len(new_items)}개")
-    print(f"📋 수집 모드: {collection_mode}")
-    if collection_mode == 'daily':
-        print(f"📋 종료 조건: 연속 중복 {max_duplicate_count}건")
-    print("="*60)
+    print("\n" + "=" * 60)
+    print("🎉 수집 완료!")
+    print("=" * 60)
 
 if __name__ == "__main__":
-    collect_kstartup_data()
+    main()
