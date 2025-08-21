@@ -60,7 +60,7 @@ jobs:
     # Step 1: 실제 K-Startup 데이터 수집
     - name: Collect K-Startup Data
       run: |
-        echo "🚀 K-Startup 실제 데이터 수집 시작..."
+        echo "🚀 K-Startup 실제 데이터 수집 시작 (개선된 로직)..."
         python scripts/kstartup_real_collector.py
       continue-on-error: true
     
