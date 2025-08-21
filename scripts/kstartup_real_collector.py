@@ -133,10 +133,10 @@ def collect_kstartup_data():
     print(f"📋 수집 모드: {collection_mode}")
     
     if collection_mode == 'daily':
-        print("📅 Daily 모드: 최대 10페이지까지 데이터 수집")
-        max_duplicate_count = 10  # 연속 중복 10개면 종료 (구글시트와 동일)
-        max_pages = 10  # 10페이지까지 시도
-        min_check_count = 0  # 최소 검토 개수 제한 없음 (구글시트와 동일)
+        print("📅 Daily 모드: 최신 데이터 확인")
+        max_duplicate_count = 50  # 연속 중복 50개면 종료
+        max_pages = 5  # 5페이지까지 확인 (1000개)
+        min_check_count = 0  # 최소 검토 개수 제한 없음
     else:
         print("🔄 Full 모드: 전체 데이터 수집")
         max_duplicate_count = 50  # 중복 50건에서 중지 
@@ -179,8 +179,8 @@ def collect_kstartup_data():
     
     # 데이터 수집
     page = 1
-    per_page = 100  # API가 실제로 지원하는 크기
-    duplicate_count = 0
+    per_page = 200  # 구글시트와 동일하게 200개씩
+    duplicate_count = 0  # 연속 중복 카운트
     new_items = []
     total_checked = 0  # 총 검토한 데이터 수
     
@@ -264,7 +264,7 @@ def collect_kstartup_data():
                     duplicate_count += 1
                     print(f"⚠️ 중복: {id_trimmed} → {id_last_6} ({duplicate_count}연속)")
                     
-                    # 구글시트와 동일: 연속 중복이 max_duplicate_count에 도달하면 즉시 종료
+                    # 연속 중복이 max_duplicate_count에 도달하면 종료
                     if duplicate_count >= max_duplicate_count:
                         print(f"🔄 연속 중복 {max_duplicate_count}건 도달 - 수집 종료")
                         break
