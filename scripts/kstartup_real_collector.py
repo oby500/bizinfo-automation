@@ -104,7 +104,6 @@ def create_kstartup_data(field_data):
             'application_url': field_data.get('aply_mthd_onli_rcpt_istc', ''),  # 신청방법온라인접수기관
             'guidance_url': field_data.get('biz_gdnc_url', ''),             # 사업안내URL
             'target_stage': field_data.get('biz_enyy', ''),                 # 사업연혁
-            'age_limit': field_data.get('biz_trgt_age', ''),                # 사업대상연령
             'status': '접수중' if field_data.get('rcrt_prgs_yn', '') == 'Y' else '마감',
             'collected_at': datetime.now().isoformat(),
             'collection_mode': COLLECTION_MODE
@@ -116,16 +115,16 @@ def create_kstartup_data(field_data):
         print(f"   데이터 생성 오류: {e}")
         return None
 
-def fetch_kstartup_data(page, num_rows=100):
+def fetch_kstartup_data(page, per_page=200):
     """K-Startup API에서 데이터 조회"""
     params = {
         'ServiceKey': API_KEY,
-        'pageNo': page,
-        'numOfRows': num_rows
+        'page': page,
+        'perPage': per_page
     }
     
     try:
-        print(f"페이지 {page} 요청 중... (numOfRows={num_rows})")
+        print(f"페이지 {page} 요청 중... (perPage={per_page})")
         response = requests.get(BASE_URL, params=params, timeout=30)
         
         if response.status_code != 200:
@@ -217,9 +216,9 @@ def main():
     
     # 모드별 설정
     if COLLECTION_MODE == 'daily':
-        print("Daily 모드: 최신 데이터 확인")
-        max_duplicate_count = 50  # 연속 중복 50개면 종료
-        max_pages = 5  # 5페이지까지 확인 (500개)
+        print("Daily 모드: 최신 데이터 확인 (구글시트 동일 로직)")
+        max_duplicate_count = 10  # 연속 중복 10개면 종료 (구글시트와 동일)
+        max_pages = 3  # 3페이지까지 확인 (600개)
     else:
         print("Full 모드: 전체 데이터 수집")
         max_duplicate_count = 100  # 연속 중복 100개면 종료 
@@ -238,7 +237,7 @@ def main():
         print(f"페이지 {page}/{max_pages} 처리 중...")
         
         # 데이터 조회
-        data_list = fetch_kstartup_data(page, num_rows=100)
+        data_list = fetch_kstartup_data(page, per_page=200)
         if not data_list:
             print(f"   페이지 {page} 데이터 조회 실패")
             break
@@ -287,8 +286,8 @@ def main():
     print()
     print("주요 개선사항:")
     print("  - 올바른 XML 파싱 (<col name='필드명'>값</col>)")
-    print("  - 구글시트와 동일한 데이터 구조")
-    print("  - 연속 50개 중복 시 자동 종료")
+    print("  - 구글시트와 완전 동일한 로직 (page/perPage=200)")
+    print("  - 연속 10개 중복 시 자동 종료 (구글시트와 동일)")
     print("  - 페이지 단위 중복 체크")
     print("=" * 60)
     
