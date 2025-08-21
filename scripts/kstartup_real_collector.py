@@ -134,9 +134,9 @@ def collect_kstartup_data():
     
     if collection_mode == 'daily':
         print("📅 Daily 모드: 최대 10페이지까지 데이터 수집")
-        max_duplicate_count = 50  # 연속 중복 50개까지 허용
+        max_duplicate_count = 10  # 연속 중복 10개면 종료 (구글시트와 동일)
         max_pages = 10  # 10페이지까지 시도
-        min_check_count = 100  # 최소 100개 검토
+        min_check_count = 0  # 최소 검토 개수 제한 없음 (구글시트와 동일)
     else:
         print("🔄 Full 모드: 전체 데이터 수집")
         max_duplicate_count = 50  # 중복 50건에서 중지 
@@ -262,11 +262,11 @@ def collect_kstartup_data():
                 
                 if id_last_6 in existing_ids:
                     duplicate_count += 1
-                    print(f"⚠️ 중복: {id_trimmed} → {id_last_6} ({duplicate_count}연속, 총 {total_checked}개 검토)")
+                    print(f"⚠️ 중복: {id_trimmed} → {id_last_6} ({duplicate_count}연속)")
                     
-                    # 최소 검토 개수를 만족했고 연속 중복이 많을 때만 종료
-                    if total_checked >= min_check_count and duplicate_count >= max_duplicate_count:
-                        print(f"🔄 최소 {min_check_count}개 검토 완료 + 연속 중복 {max_duplicate_count}건 도달 - 수집 종료")
+                    # 구글시트와 동일: 연속 중복이 max_duplicate_count에 도달하면 즉시 종료
+                    if duplicate_count >= max_duplicate_count:
+                        print(f"🔄 연속 중복 {max_duplicate_count}건 도달 - 수집 종료")
                         break
                     continue
                 
@@ -313,8 +313,8 @@ def collect_kstartup_data():
                 # 요청 간 딜레이
                 time.sleep(0.1)
             
-            # 루프 종료 조건 개선: 최소 검토 개수 + 중복 패턴 확인
-            if total_checked >= min_check_count and duplicate_count >= max_duplicate_count:
+            # 연속 중복으로 종료된 경우
+            if duplicate_count >= max_duplicate_count:
                 break
             
             # 페이지 제한 체크
@@ -351,7 +351,9 @@ def collect_kstartup_data():
     print("🎉 K-Startup 수집 완료")
     print(f"📊 총 검토: {total_checked}개")
     print(f"📊 새로운 공고: {len(new_items)}개")
-    print(f"📋 수집 모드: {collection_mode} (최소 {min_check_count}개 검토)")
+    print(f"📋 수집 모드: {collection_mode}")
+    if collection_mode == 'daily':
+        print(f"📋 종료 조건: 연속 중복 {max_duplicate_count}건")
     print("="*60)
 
 if __name__ == "__main__":
