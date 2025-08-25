@@ -114,12 +114,12 @@ jobs:
         echo "📝 Step 3: 상세 내용 병렬 파싱..."
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: K-Startup 첨부파일 처리
-    - name: Step 4 - K-Startup Attachment Processing
+    # Step 4: K-Startup 첨부파일 처리 (개선된 버전)
+    - name: Step 4 - K-Startup Attachment Processing (Enhanced)
       if: steps.mode.outputs.mode == 'full'
       run: |
-        echo "📎 Step 4: K-Startup 첨부파일 처리..."
-        python scripts/kstartup_attachment_processor.py || echo "첨부파일 처리 실패 - 건너뛰기"
+        echo "📎 Step 4: K-Startup 첨부파일 처리 (파일 타입 감지)..."
+        python scripts/kstartup_attachment_enhanced.py || echo "첨부파일 처리 실패 - 건너뛰기"
           
     - name: Generate Final Report
       if: always()
