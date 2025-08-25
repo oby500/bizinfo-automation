@@ -48,14 +48,14 @@ jobs:
         echo "SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXppYW9neWNjaXdneHhtYWhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzYxNTc4MCwiZXhwIjoyMDY5MTkxNzgwfQ.HnhM7zSLzi7lHVPd2IVQKIACDq_YA05mBMgZbSN1c9Q" >> .env
         echo "COLLECTION_MODE=${{ steps.mode.outputs.mode }}" >> .env
 
-    # Step 1: 실제 K-Startup 데이터 수집 (개선된 로직)
+    # Step 1: 실제 K-Startup 데이터 수집 (API 형식 변경 대응)
     - name: Collect K-Startup Data
       run: |
-        echo "🚀 K-Startup 실제 데이터 수집 시작 (개선된 로직)..."
+        echo "🚀 K-Startup 실제 데이터 수집 시작 (API 형식 변경 대응)..."
         echo "📅 모드: ${{ steps.mode.outputs.mode }}"
-        echo "📊 Daily 모드: 연속 50개 중복 시 종료 (구글시트 동일 로직)"
+        echo "📊 Daily 모드: 최근 200개 확인"
         echo "📊 Full 모드: 전체 데이터 수집"
-        python scripts/kstartup_real_collector.py
+        python collect_kstartup_daily.py
       continue-on-error: true
     
     # Step 2: 수집 결과 확인
@@ -114,12 +114,12 @@ jobs:
         echo "📝 Step 3: 상세 내용 병렬 파싱..."
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: 첨부파일 정보 처리 (선택적)
-    - name: Step 4 - Attachment Processing (Optional)
+    # Step 4: K-Startup 첨부파일 처리
+    - name: Step 4 - K-Startup Attachment Processing
       if: steps.mode.outputs.mode == 'full'
       run: |
-        echo "📎 Step 4: 첨부파일 정보 처리..."
-        python scripts/kstartup_attachment_fix.py || echo "첨부파일 스크립트 없음 - 건너뛰기"
+        echo "📎 Step 4: K-Startup 첨부파일 처리..."
+        python kstartup_attachment_fix.py || echo "첨부파일 처리 실패 - 건너뛰기"
           
     - name: Generate Final Report
       if: always()
