@@ -55,7 +55,7 @@ jobs:
         echo "📅 모드: ${{ steps.mode.outputs.mode }}"
         echo "📊 Daily 모드: 최근 200개 확인"
         echo "📊 Full 모드: 전체 데이터 수집"
-        python collect_kstartup_daily.py
+        python scripts/kstartup_daily_collector.py
       continue-on-error: true
     
     # Step 2: 수집 결과 확인
@@ -119,7 +119,7 @@ jobs:
       if: steps.mode.outputs.mode == 'full'
       run: |
         echo "📎 Step 4: K-Startup 첨부파일 처리..."
-        python kstartup_attachment_fix.py || echo "첨부파일 처리 실패 - 건너뛰기"
+        python scripts/kstartup_attachment_processor.py || echo "첨부파일 처리 실패 - 건너뛰기"
           
     - name: Generate Final Report
       if: always()
