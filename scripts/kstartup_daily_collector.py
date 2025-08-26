@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """
-K-Startup 일일 수집기 (워크플로우 호환 버전)
-- daily/full 모드 지원
-- 병렬 처리로 고속 수집
-- 중복 체크 및 증분 업데이트
+K-Startup 공공데이터 API 수집기 (최종 버전)
+data.go.kr API 사용 - kstartup_complete 테이블에 맞게 수정
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import os
 import requests
-from bs4 import BeautifulSoup
-import json
+import xml.etree.ElementTree as ET
 from supabase import create_client
 from dotenv import load_dotenv
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+from urllib.parse import unquote
 import time
 
 load_dotenv()
@@ -28,228 +24,200 @@ supabase = create_client(url, key)
 # 수집 모드
 COLLECTION_MODE = os.environ.get('COLLECTION_MODE', 'daily')
 
-# 전역 변수
-lock = threading.Lock()
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8'
-})
+# API 설정
+API_URL = "http://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
+SERVICE_KEY = "rHwfm51FIrtIJjqRL2fJFJFvNsVEng7v7Ud0T44EKQpgKoMEJmN06LZ+KQ2wbTfW29XZSm8OzMuNCUQi+MTlsQ=="
 
-progress = {
-    'total': 0,
-    'new': 0,
-    'updated': 0,
-    'skipped': 0,
-    'errors': 0
-}
-
-def fetch_page(page):
-    """페이지 데이터 가져오기"""
-    url = "https://www.k-startup.go.kr/apigateway/ksus/bsns/anm/list"
-    params = {
-        'schClsfCd': 'PBC010',
-        'sortType': 'recent',
-        'currentPage': page,
-        'perPage': 200,
-        'searchStatus': '',
-        'schStr': '',
-        'schEdate': '',
-        'returnType': 'JSON'
-    }
+def parse_xml_item(item):
+    """XML item 파싱 (col name 형식)"""
+    data = {}
     
-    try:
-        response = session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data and 'dataList' in data:
-            return data['dataList']
-    except Exception as e:
-        print(f"   ❌ 페이지 {page} 오류: {e}")
+    # col 태그들에서 데이터 추출
+    cols = item.findall('col')
+    for col in cols:
+        name = col.get('name')
+        value = col.text if col.text else ''
+        data[name] = value.strip()
     
-    return []
+    return data
 
-def parse_detail_page(url, announcement_id):
-    """상세페이지 파싱"""
+def fetch_page(page_no, num_of_rows=100):
+    """API에서 페이지 데이터 가져오기"""
     try:
-        response = session.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # bsns_sumry 추출
-        content_sections = []
-        for selector in ['.content_wrap', '.detail_content', '.board_view']:
-            elements = soup.select(selector)
-            for elem in elements:
-                text = elem.get_text(strip=True)
-                if text and len(text) > 100:
-                    content_sections.append(text)
-        
-        bsns_sumry = ' '.join(content_sections[:3])[:5000] if content_sections else None
-        
-        # 첨부파일 추출
-        attachments = []
-        download_links = soup.find_all('a', href=lambda x: x and '/afile/fileDownload/' in x)
-        
-        for link in download_links:
-            href = link.get('href', '')
-            text = link.get_text(strip=True) or '첨부파일'
-            
-            if href.startswith('/'):
-                href = f"https://www.k-startup.go.kr{href}"
-            
-            attachments.append({
-                'url': href,
-                'text': text,
-                'type': 'FILE'
-            })
-        
-        return bsns_sumry, attachments
-        
-    except Exception as e:
-        print(f"   ❌ 상세페이지 파싱 오류: {e}")
-        return None, []
-
-def process_announcement(item):
-    """공고 처리"""
-    try:
-        # 데이터 매핑
-        announcement_id = f"KS_{item.get('pbancSn', '')}"
-        
-        # 상세페이지 URL 결정
-        status = item.get('pbancSttsCd', '')
-        pbanc_sn = item.get('pbancSn', '')
-        
-        if status == 'PBC030':  # 마감
-            detail_url = f'https://www.k-startup.go.kr/web/contents/bizpbanc-deadline.do?schM=view&pbancSn={pbanc_sn}'
-        else:  # 진행중
-            detail_url = f'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn={pbanc_sn}'
-        
-        # 상세페이지 파싱
-        bsns_sumry, attachments = parse_detail_page(detail_url, announcement_id)
-        
-        # 데이터 준비
-        data = {
-            'announcement_id': announcement_id,
-            'pbanc_sn': item.get('pbancSn'),
-            'biz_pbanc_nm': item.get('bizPbancNm', ''),
-            'detl_pg_url': detail_url,
-            'spt_fld_cn': item.get('sprtFldCn', ''),
-            'spt_trgt_cn': item.get('pbancSuptTrgtCn', ''),
-            'pbanc_bgng_dt': item.get('pbancBgngDt', ''),
-            'pbanc_ddln_dt': item.get('pbancDdlnDt', ''),
-            'bsns_sumry': bsns_sumry or item.get('bizPbancDtlCn', ''),
-            'attachment_urls': attachments if attachments else [],
-            'attachment_count': len(attachments),
-            'status': '모집중' if status != 'PBC030' else '마감',
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat()
+        params = {
+            'serviceKey': unquote(SERVICE_KEY),
+            'pageNo': page_no,
+            'numOfRows': num_of_rows
         }
         
-        # DB 업서트
-        result = supabase.table('kstartup_complete').upsert(
-            data,
-            on_conflict='announcement_id'
-        ).execute()
+        response = requests.get(API_URL, params=params, timeout=30)
         
-        if result.data:
-            with lock:
-                if attachments:
-                    progress['updated'] += 1
-                else:
-                    progress['new'] += 1
-            return True
+        if response.status_code != 200:
+            return None, 0, 0
+        
+        # XML 파싱
+        try:
+            root = ET.fromstring(response.content)
             
-    except Exception as e:
-        with lock:
-            progress['errors'] += 1
-        return False
+            # 전체 개수 확인
+            total_count_elem = root.find('totalCount')
+            total = int(total_count_elem.text) if total_count_elem is not None else 0
+            
+            # 데이터 추출
+            data_elem = root.find('data')
+            if data_elem is None:
+                return [], total, 0
+            
+            # 아이템 리스트
+            items = data_elem.findall('item')
+            
+            announcements = []
+            for item in items:
+                raw_data = parse_xml_item(item)
+                
+                # 필드 매핑 (테이블 컬럼에 맞게)
+                ann = {}
+                
+                # pbanc_sn (공고번호)
+                pbanc_sn = raw_data.get('pbanc_sn', '')
+                if not pbanc_sn:
+                    continue
+                    
+                ann['announcement_id'] = f"KS_{pbanc_sn}"
+                
+                # 필수 필드
+                ann['biz_pbanc_nm'] = raw_data.get('biz_pbanc_nm') or raw_data.get('intg_pbanc_biz_nm', '')
+                ann['pbanc_ctnt'] = raw_data.get('pbanc_ctnt', '')  # 공고내용
+                ann['supt_biz_clsfc'] = raw_data.get('supt_biz_clsfc', '')  # 지원사업분류
+                ann['aply_trgt_ctnt'] = raw_data.get('aply_trgt_ctnt', '')  # 지원대상내용
+                ann['supt_regin'] = raw_data.get('supt_regin', '')  # 지원지역
+                ann['pbanc_rcpt_bgng_dt'] = raw_data.get('pbanc_rcpt_bgng_dt', '')  # 접수시작일
+                ann['pbanc_rcpt_end_dt'] = raw_data.get('pbanc_rcpt_end_dt', '')  # 접수종료일
+                ann['pbanc_ntrp_nm'] = raw_data.get('pbanc_ntrp_nm', '')  # 공고기관명
+                ann['biz_gdnc_url'] = raw_data.get('biz_gdnc_url', '')  # 사업안내URL
+                ann['detl_pg_url'] = raw_data.get('detl_pg_url', '')  # 상세페이지URL
+                
+                # bsns_sumry는 pbanc_ctnt 사용
+                ann['bsns_sumry'] = ann['pbanc_ctnt'][:5000] if ann['pbanc_ctnt'] else ''
+                
+                # 상태
+                if raw_data.get('rcrt_prgs_yn') == 'Y':
+                    ann['status'] = '모집중'
+                else:
+                    ann['status'] = '마감'
+                    
+                # 첨부파일 관련
+                ann['attachment_urls'] = []
+                ann['attachment_count'] = 0
+                
+                # 타임스탬프
+                ann['created_at'] = datetime.now().isoformat()
+                
+                announcements.append(ann)
+            
+            return announcements, total, len(announcements)
+            
+        except ET.ParseError:
+            return None, 0, 0
+            
+    except Exception:
+        return None, 0, 0
 
 def main():
     """메인 실행"""
     print("="*60)
-    print(f"🚀 K-Startup 수집 시작 ({COLLECTION_MODE} 모드)")
+    print(f"🚀 K-Startup 공공데이터 API 수집 시작 ({COLLECTION_MODE} 모드)")
     print("="*60)
     
-    # 모드별 페이지 설정
-    if COLLECTION_MODE == 'full':
-        max_pages = 259  # 전체
-        print("📊 Full 모드: 전체 데이터 수집")
-    else:
-        max_pages = 3  # daily는 최근 3페이지만
-        print("📊 Daily 모드: 최근 600개만 확인")
-    
-    # 기존 데이터 ID 수집
+    # 기존 데이터 조회
     existing = supabase.table('kstartup_complete').select('announcement_id').execute()
     existing_ids = {item['announcement_id'] for item in existing.data} if existing.data else set()
     print(f"✅ 기존 데이터: {len(existing_ids)}개\n")
     
-    all_items = []
-    consecutive_duplicates = 0
+    # 첫 페이지로 전체 개수 확인
+    items, total_count, _ = fetch_page(1, 10)
     
-    # 페이지별 수집
-    for page in range(1, max_pages + 1):
-        items = fetch_page(page)
-        
-        if not items:
-            print(f"   페이지 {page}: 데이터 없음")
-            break
-        
-        # 중복 체크
-        new_items = []
-        page_duplicates = 0
-        
-        for item in items:
-            ann_id = f"KS_{item.get('pbancSn', '')}"
-            if ann_id not in existing_ids:
-                new_items.append(item)
-            else:
-                page_duplicates += 1
-        
-        all_items.extend(new_items)
-        
-        if new_items:
-            print(f"   페이지 {page}: {len(new_items)}개 신규 (중복 {page_duplicates}개)")
-            consecutive_duplicates = 0
-        else:
-            print(f"   페이지 {page}: 모두 중복 ({page_duplicates}개)")
-            consecutive_duplicates += 1
-        
-        # 연속 중복 시 종료
-        if consecutive_duplicates >= 3 and COLLECTION_MODE == 'daily':
-            print(f"\n⚡ 연속 3페이지 중복 - 조기 종료")
-            break
-    
-    progress['total'] = len(all_items)
-    
-    if not all_items:
-        print("\n✅ 새로운 데이터 없음")
+    if items is None:
+        print("[ERROR] API 접근 실패")
         return
     
-    print(f"\n📊 처리할 신규 데이터: {len(all_items)}개")
-    print("🔄 병렬 처리 시작...\n")
+    print(f"📊 전체 공고 수: {total_count}개")
     
-    # 병렬 처리
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [executor.submit(process_announcement, item) for item in all_items]
+    # 모드별 설정
+    if COLLECTION_MODE == 'full':
+        # Full 모드는 최대 20페이지까지만 (2000개)
+        total_pages = min(20, (total_count // 100) + 1)
+        print(f"📊 Full 모드: {total_pages}페이지 수집 (최대 2000개)")
+    else:
+        # Daily 모드는 최대 3페이지 (300개)
+        total_pages = min(3, (total_count // 100) + 1)
+        print(f"📊 Daily 모드: {total_pages}페이지 수집 (최대 300개)")
+    
+    all_new = 0
+    all_updated = 0
+    errors = 0
+    
+    # 페이지별 수집
+    for page in range(1, total_pages + 1):
+        print(f"\n페이지 {page}/{total_pages} 처리중...")
+        items, _, count = fetch_page(page, 100)
         
-        for i, future in enumerate(as_completed(futures), 1):
+        if items is None:
+            errors += 1
+            continue
+        
+        if not items:
+            print("  데이터 없음")
+            break
+        
+        new_count = 0
+        update_count = 0
+        page_errors = 0
+        
+        for item in items:
             try:
-                future.result()
-                if i % 50 == 0:
-                    print(f"   진행: {i}/{len(all_items)} ({i*100//len(all_items)}%)")
-            except:
-                pass
+                if item['announcement_id'] in existing_ids:
+                    # 기존 데이터 업데이트
+                    result = supabase.table('kstartup_complete').update(
+                        item
+                    ).eq('announcement_id', item['announcement_id']).execute()
+                    
+                    if result.data:
+                        update_count += 1
+                else:
+                    # 신규 데이터 삽입
+                    result = supabase.table('kstartup_complete').insert(item).execute()
+                    
+                    if result.data:
+                        new_count += 1
+                        existing_ids.add(item['announcement_id'])
+                        
+            except Exception as e:
+                page_errors += 1
+                if page_errors <= 2:  # 처음 2개만 에러 표시
+                    print(f"    [ERROR] {item['announcement_id']}: {str(e)[:100]}")
+        
+        all_new += new_count
+        all_updated += update_count
+        errors += page_errors
+        
+        print(f"  결과: 신규 {new_count}개, 업데이트 {update_count}개, 오류 {page_errors}개")
+        
+        # Daily 모드에서 신규가 없으면 조기 종료
+        if COLLECTION_MODE == 'daily' and new_count == 0 and page > 1:
+            print("\n연속 중복 - 조기 종료")
+            break
+        
+        time.sleep(0.5)  # API 부하 방지
     
     # 최종 보고
     print("\n" + "="*60)
-    print("📊 K-Startup 수집 완료")
+    print("📊 K-Startup 공공데이터 API 수집 완료")
     print("="*60)
-    print(f"✅ 신규 추가: {progress['new']}개")
-    print(f"📝 업데이트: {progress['updated']}개")
-    print(f"⏭️  건너뜀: {progress['skipped']}개")
-    print(f"❌ 오류: {progress['errors']}개")
+    print(f"✅ 신규: {all_new}개")
+    print(f"📝 업데이트: {all_updated}개")
+    print(f"❌ 오류: {errors}개")
+    print(f"📊 전체: {all_new + all_updated}개 처리")
     print("="*60)
 
 if __name__ == "__main__":
