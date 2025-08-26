@@ -228,12 +228,27 @@ def main():
     logging.info("K-Startup 병렬 파싱 시작")
     logging.info("=" * 60)
     
-    # 모든 공고 조회
+    # 처리 제한 확인 (환경변수로 받음)
+    processing_limit = int(os.environ.get('PROCESSING_LIMIT', '0'))
+    
+    # 공고 조회
     try:
-        result = supabase.table('kstartup_complete')\
-            .select('announcement_id, biz_pbanc_nm, detl_pg_url, pbanc_ctnt')\
-            .not_.is_('detl_pg_url', 'null')\
-            .execute()
+        if processing_limit > 0:
+            # Daily 모드: 최근 50개만
+            result = supabase.table('kstartup_complete')\
+                .select('announcement_id, biz_pbanc_nm, detl_pg_url, pbanc_ctnt')\
+                .not_.is_('detl_pg_url', 'null')\
+                .order('created_at', desc=True)\
+                .limit(processing_limit)\
+                .execute()
+            logging.info(f"Daily 모드: 최근 {processing_limit}개만 처리")
+        else:
+            # Full 모드: 전체
+            result = supabase.table('kstartup_complete')\
+                .select('announcement_id, biz_pbanc_nm, detl_pg_url, pbanc_ctnt')\
+                .not_.is_('detl_pg_url', 'null')\
+                .execute()
+            logging.info("Full 모드: 전체 처리")
         
         announcements = result.data
         progress['total'] = len(announcements)

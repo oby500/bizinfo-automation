@@ -302,10 +302,24 @@ def main():
     print("📎 K-Startup 첨부파일 수집 개선 (기업마당 방식)")
     print("="*70)
     
+    # 처리 제한 확인 (환경변수로 받음)
+    processing_limit = int(os.environ.get('PROCESSING_LIMIT', '0'))
+    
     # 처리 대상 조회
-    all_records = supabase.table('kstartup_complete')\
-        .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls, attachment_count')\
-        .execute()
+    if processing_limit > 0:
+        # Daily 모드: 최근 N개만
+        all_records = supabase.table('kstartup_complete')\
+            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls, attachment_count')\
+            .order('created_at', desc=True)\
+            .limit(processing_limit * 2)\
+            .execute()
+        print(f"📌 Daily 모드: 최근 {processing_limit*2}개 중에서 처리 필요한 것만 선택")
+    else:
+        # Full 모드: 전체
+        all_records = supabase.table('kstartup_complete')\
+            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls, attachment_count')\
+            .execute()
+        print("📌 Full 모드: 전체 데이터 처리")
     
     needs_processing = []
     
@@ -322,9 +336,14 @@ def main():
             if all_file_type:
                 needs_processing.append(record)
     
+    # Daily 모드에서는 최대 50개만 처리
+    if processing_limit > 0 and len(needs_processing) > processing_limit:
+        needs_processing = needs_processing[:processing_limit]
+        print(f"📌 Daily 모드 제한: 최대 {processing_limit}개만 처리")
+    
     progress['total'] = len(needs_processing)
     
-    print(f"✅ 전체: {len(all_records.data)}개")
+    print(f"✅ 검토 대상: {len(all_records.data)}개")
     print(f"📎 처리 필요: {progress['total']}개")
     
     if progress['total'] == 0:

@@ -107,16 +107,28 @@ jobs:
         print('='*60)
         "
     
-    # Step 3: bsns_sumry 병렬 파싱 (daily 모드에서도 실행)
+    # Step 3: bsns_sumry 병렬 파싱 (모드별 처리)
     - name: Step 3 - Parallel Parsing
       run: |
-        echo "📝 Step 3: 상세 내용 병렬 파싱..."
+        if [ "${{ steps.mode.outputs.mode }}" = "daily" ]; then
+          echo "📝 Step 3: 최근 50개 파싱 (Daily 모드)..."
+          export PROCESSING_LIMIT=50
+        else
+          echo "📝 Step 3: 전체 파싱 (Full 모드)..."
+          export PROCESSING_LIMIT=0
+        fi
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: K-Startup 첨부파일 처리 (daily 모드에서도 실행)
+    # Step 4: K-Startup 첨부파일 처리 (모드별 처리)
     - name: Step 4 - K-Startup Attachment Processing (Enhanced)
       run: |
-        echo "📎 Step 4: K-Startup 첨부파일 처리 (파일 타입 감지)..."
+        if [ "${{ steps.mode.outputs.mode }}" = "daily" ]; then
+          echo "📎 Step 4: 최근 50개 첨부파일 처리 (Daily 모드)..."
+          export PROCESSING_LIMIT=50
+        else
+          echo "📎 Step 4: 전체 첨부파일 처리 (Full 모드)..."
+          export PROCESSING_LIMIT=0
+        fi
         python scripts/kstartup_attachment_enhanced.py || echo "첨부파일 처리 실패 - 건너뛰기"
           
     - name: Generate Final Report
