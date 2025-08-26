@@ -106,7 +106,7 @@ def fetch_attachments_from_detail_page(detail_url):
         print(f"    [첨부파일 추출 오류]: {str(e)[:50]}")
         return []
 
-def fetch_page(page_no, num_of_rows=100):
+def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져오기
     """API에서 페이지 데이터 가져오기"""
     try:
         params = {
@@ -149,7 +149,7 @@ def fetch_page(page_no, num_of_rows=100):
                     continue
                     
                 ann['announcement_id'] = f"KS_{pbanc_sn}"
-                ann['pbanc_sn'] = pbanc_sn
+                # ann['pbanc_sn'] = pbanc_sn  # 우리 테이블에는 이 컬럼이 없음
                 
                 # 필수 필드
                 ann['biz_pbanc_nm'] = raw_data.get('biz_pbanc_nm') or raw_data.get('intg_pbanc_biz_nm', '')
@@ -192,9 +192,20 @@ def main():
     print("📎 첨부파일 수집 포함")
     print("="*60)
     
-    # 기존 데이터 조회
-    existing = supabase.table('kstartup_complete').select('announcement_id').execute()
-    existing_ids = {item['announcement_id'] for item in existing.data} if existing.data else set()
+    # 기존 데이터 조회 (전체 가져오기 - Supabase는 기본 1000개 제한이 있음)
+    # 여러 페이지로 나눠서 가져오기
+    existing_ids = set()
+    offset = 0
+    limit = 1000
+    while True:
+        existing = supabase.table('kstartup_complete').select('announcement_id').range(offset, offset + limit - 1).execute()
+        if not existing.data:
+            break
+        for item in existing.data:
+            existing_ids.add(item['announcement_id'])
+        if len(existing.data) < limit:
+            break
+        offset += limit
     print(f"✅ 기존 데이터: {len(existing_ids)}개\n")
     
     # 첫 페이지로 전체 개수 확인
@@ -221,10 +232,13 @@ def main():
     all_attachments = 0
     errors = 0
     
+    # 연속 중복 카운터 (구글시트 방식)
+    consecutive_duplicates = 0
+    
     # 페이지별 수집
     for page in range(1, total_pages + 1):
         print(f"\n페이지 {page}/{total_pages} 처리중...")
-        items, _, count = fetch_page(page, 100)
+        items, _, count = fetch_page(page, 200)  # 200개씩 가져오기
         
         if items is None:
             errors += 1
@@ -238,6 +252,7 @@ def main():
         update_count = 0
         attach_count = 0
         page_errors = 0
+        page_duplicates = 0  # 페이지별 중복 수
         
         for item in items:
             try:
@@ -253,15 +268,34 @@ def main():
                     item['attachment_count'] = 0
                 
                 if item['announcement_id'] in existing_ids:
-                    # 기존 데이터 업데이트
-                    result = supabase.table('kstartup_complete').update(
-                        item
-                    ).eq('announcement_id', item['announcement_id']).execute()
+                    # 기존 데이터 - 중복 카운트
+                    page_duplicates += 1
+                    consecutive_duplicates += 1
                     
-                    if result.data:
-                        update_count += 1
+                    # 연속 50개 중복 시 종료 (구글시트는 10개지만 우리는 좀 더 여유있게)
+                    if consecutive_duplicates >= 50:
+                        print(f"\n📌 연속 {consecutive_duplicates}개 중복 → 수집 종료")
+                        all_new += new_count
+                        all_updated += update_count
+                        all_attachments += attach_count
+                        # 최종 보고서로 이동
+                        break
+                    
+                    # 기존 데이터 업데이트 (첨부파일이 없던 경우에만)
+                    if item.get('attachment_count', 0) > 0:
+                        existing_attach = supabase.table('kstartup_complete').select('attachment_count').eq('announcement_id', item['announcement_id']).execute()
+                        if existing_attach.data and existing_attach.data[0].get('attachment_count', 0) == 0:
+                            # 기존에 첨부파일이 없었으면 업데이트
+                            result = supabase.table('kstartup_complete').update({
+                                'attachment_urls': item['attachment_urls'],
+                                'attachment_count': item['attachment_count']
+                            }).eq('announcement_id', item['announcement_id']).execute()
+                            
+                            if result.data:
+                                update_count += 1
                 else:
                     # 신규 데이터 삽입
+                    consecutive_duplicates = 0  # 신규 데이터면 중복 카운터 리셋
                     result = supabase.table('kstartup_complete').insert(item).execute()
                     
                     if result.data:
@@ -278,14 +312,13 @@ def main():
         all_attachments += attach_count
         errors += page_errors
         
-        print(f"  결과: 신규 {new_count}개, 업데이트 {update_count}개")
+        print(f"  결과: 신규 {new_count}개, 업데이트 {update_count}개, 중복 {page_duplicates}개")
         print(f"  첨부파일: {attach_count}개 공고에서 수집")
         if page_errors > 0:
             print(f"  오류: {page_errors}개")
         
-        # Daily 모드에서 신규가 없으면 조기 종료
-        if COLLECTION_MODE == 'daily' and new_count == 0 and page > 1:
-            print("\n연속 중복 - 조기 종료")
+        # 연속 중복으로 종료된 경우
+        if consecutive_duplicates >= 50:
             break
         
         time.sleep(0.5)  # API 부하 방지
