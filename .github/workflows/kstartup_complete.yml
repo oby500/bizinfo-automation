@@ -107,16 +107,14 @@ jobs:
         print('='*60)
         "
     
-    # Step 3: bsns_sumry 병렬 파싱 (선택적)
-    - name: Step 3 - Parallel Parsing (Optional)
-      if: steps.mode.outputs.mode == 'full'
+    # Step 3: bsns_sumry 병렬 파싱 (daily 모드에서도 실행)
+    - name: Step 3 - Parallel Parsing
       run: |
         echo "📝 Step 3: 상세 내용 병렬 파싱..."
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: K-Startup 첨부파일 처리 (개선된 버전)
+    # Step 4: K-Startup 첨부파일 처리 (daily 모드에서도 실행)
     - name: Step 4 - K-Startup Attachment Processing (Enhanced)
-      if: steps.mode.outputs.mode == 'full'
       run: |
         echo "📎 Step 4: K-Startup 첨부파일 처리 (파일 타입 감지)..."
         python scripts/kstartup_attachment_enhanced.py || echo "첨부파일 처리 실패 - 건너뛰기"
