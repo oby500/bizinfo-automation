@@ -4,14 +4,6 @@ K-Startup 공공데이터 API 수집기 (첨부파일 포함 버전)
 data.go.kr API + 웹 스크래핑으로 첨부파일 수집
 """
 import sys
-
-def get_kst_time():
-    """한국 시간(KST) 반환"""
-    from datetime import datetime, timedelta
-    utc_now = datetime.utcnow()
-    kst_now = utc_now + timedelta(hours=9)
-    return kst_now
-
 sys.stdout.reconfigure(encoding='utf-8')
 import os
 import requests
@@ -181,7 +173,7 @@ def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져
                     ann['status'] = '마감'
                     
                 # 타임스탬프
-                ann['created_at'] = get_kst_time().isoformat()
+                ann['created_at'] = datetime.now().isoformat()
                 
                 announcements.append(ann)
             

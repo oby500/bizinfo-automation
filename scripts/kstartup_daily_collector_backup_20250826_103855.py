@@ -4,14 +4,6 @@ K-Startup 공공데이터 API 수집기 (첨부파일 포함 버전)
 data.go.kr API + 웹 스크래핑으로 첨부파일 수집
 """
 import sys
-
-def get_kst_time():
-    """한국 시간(KST) 반환"""
-    from datetime import datetime, timedelta
-    utc_now = datetime.utcnow()
-    kst_now = utc_now + timedelta(hours=9)
-    return kst_now
-
 sys.stdout.reconfigure(encoding='utf-8')
 import os
 import requests
@@ -157,7 +149,7 @@ def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져
                     continue
                     
                 ann['announcement_id'] = f"KS_{pbanc_sn}"
-                # ann['pbanc_sn'] = pbanc_sn  # 우리 테이블에는 이 컬럼이 없음
+                ann['pbanc_sn'] = pbanc_sn
                 
                 # 필수 필드
                 ann['biz_pbanc_nm'] = raw_data.get('biz_pbanc_nm') or raw_data.get('intg_pbanc_biz_nm', '')
@@ -181,7 +173,7 @@ def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져
                     ann['status'] = '마감'
                     
                 # 타임스탬프
-                ann['created_at'] = get_kst_time().isoformat()
+                ann['created_at'] = datetime.now().isoformat()
                 
                 announcements.append(ann)
             
@@ -200,20 +192,9 @@ def main():
     print("📎 첨부파일 수집 포함")
     print("="*60)
     
-    # 기존 데이터 조회 (전체 가져오기 - Supabase는 기본 1000개 제한이 있음)
-    # 여러 페이지로 나눠서 가져오기
-    existing_ids = set()
-    offset = 0
-    limit = 1000
-    while True:
-        existing = supabase.table('kstartup_complete').select('announcement_id').range(offset, offset + limit - 1).execute()
-        if not existing.data:
-            break
-        for item in existing.data:
-            existing_ids.add(item['announcement_id'])
-        if len(existing.data) < limit:
-            break
-        offset += limit
+    # 기존 데이터 조회
+    existing = supabase.table('kstartup_complete').select('announcement_id').execute()
+    existing_ids = {item['announcement_id'] for item in existing.data} if existing.data else set()
     print(f"✅ 기존 데이터: {len(existing_ids)}개\n")
     
     # 첫 페이지로 전체 개수 확인
@@ -289,18 +270,13 @@ def main():
                         # 최종 보고서로 이동
                         break
                     
-                    # 기존 데이터 업데이트 (첨부파일이 없던 경우에만)
-                    if item.get('attachment_count', 0) > 0:
-                        existing_attach = supabase.table('kstartup_complete').select('attachment_count').eq('announcement_id', item['announcement_id']).execute()
-                        if existing_attach.data and existing_attach.data[0].get('attachment_count', 0) == 0:
-                            # 기존에 첨부파일이 없었으면 업데이트
-                            result = supabase.table('kstartup_complete').update({
-                                'attachment_urls': item['attachment_urls'],
-                                'attachment_count': item['attachment_count']
-                            }).eq('announcement_id', item['announcement_id']).execute()
-                            
-                            if result.data:
-                                update_count += 1
+                    # 기존 데이터 업데이트
+                    result = supabase.table('kstartup_complete').update(
+                        item
+                    ).eq('announcement_id', item['announcement_id']).execute()
+                    
+                    if result.data:
+                        update_count += 1
                 else:
                     # 신규 데이터 삽입
                     consecutive_duplicates = 0  # 신규 데이터면 중복 카운터 리셋

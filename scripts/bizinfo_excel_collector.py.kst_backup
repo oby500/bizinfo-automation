@@ -6,7 +6,7 @@ from supabase import create_client, Client
 import pandas as pd
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 from urllib.parse import parse_qs, urlparse
 

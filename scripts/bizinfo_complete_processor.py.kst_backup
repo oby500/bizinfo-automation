@@ -8,19 +8,13 @@ import os
 import sys
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from bs4 import BeautifulSoup
 import json
 from urllib.parse import urljoin, parse_qs, urlparse
 import re
 from supabase import create_client, Client
 import logging
-
-def get_kst_time():
-    """한국 시간(KST) 반환"""
-    utc_now = datetime.utcnow()
-    kst_now = utc_now + timedelta(hours=9)
-    return kst_now
 
 # 로깅 설정
 logging.basicConfig(
@@ -479,7 +473,7 @@ class BizInfoCompleteProcessor:
                 'hash_tag': hashtags,
                 'bsns_sumry': summary,
                 'attachment_processing_status': 'completed',
-                'updt_dt': get_kst_time().isoformat()
+                'updt_dt': datetime.now().isoformat()
             }
             
             result = self.supabase.table('bizinfo_complete').update(
