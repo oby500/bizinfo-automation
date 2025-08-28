@@ -123,11 +123,17 @@ def fix_attachment_types():
     fixed_count = 0
     error_count = 0
     
-    print("\n2. 파일 타입 검증 및 수정...")
-    # 처리 개수 제한 (처음 10개만)
-    for idx, record in enumerate(doc_records[:10]):
+    print(f"\n2. 파일 타입 검증 및 수정... (전체 {len(doc_records)}개)")
+    # 모든 레코드 처리
+    for idx, record in enumerate(doc_records, 1):
         ann_id = record.get('announcement_id')
-        print(f"\n[{ann_id}]")
+        
+        # 진행 상황 표시
+        if idx % 50 == 0 or idx == 1:
+            print(f"\n진행: {idx}/{len(doc_records)} ({idx*100//len(doc_records)}%)")
+        
+        # 상세 로그는 처음 10개와 에러만
+        verbose = idx <= 10
         
         att_urls = record.get('attachment_urls')
         updated = False
@@ -139,13 +145,15 @@ def fix_attachment_types():
                     
                     # K-Startup URL 형식 확인
                     if 'k-startup.go.kr' in url:
-                        print(f"  - 파일 검증: {url[:50]}...")
+                        if verbose:
+                            print(f"  [{ann_id}] 파일 검증: {url[:50]}...")
                         
                         # 파일 시그니처 확인
                         real_type = check_file_signature(url)
                         
                         if real_type and real_type != 'DOC':
-                            print(f"    타입 변경: DOC → {real_type}")
+                            if verbose:
+                                print(f"    타입 변경: DOC → {real_type}")
                             att['type'] = real_type
                             
                             # MIME 타입도 수정
@@ -167,10 +175,12 @@ def fix_attachment_types():
                             
                             updated = True
                         elif real_type == 'DOC':
-                            print(f"    타입 확인: 실제 DOC 파일")
+                            if verbose:
+                                print(f"    타입 확인: 실제 DOC 파일")
                         else:
                             # 시그니처 확인 실패시 HWP로 가정
-                            print(f"    타입 추정: DOC → HWP (한국 공고)")
+                            if verbose:
+                                print(f"    타입 추정: DOC → HWP (한국 공고)")
                             att['type'] = 'HWP'
                             att['mime_type'] = 'application/x-hwp'
                             if 'safe_filename' in att and att['safe_filename'].endswith('.doc'):
@@ -195,16 +205,20 @@ def fix_attachment_types():
                 
                 if update_result.data:
                     fixed_count += 1
-                    print(f"  ✅ 수정 완료")
+                    if verbose:
+                        print(f"  ✅ 수정 완료")
                 else:
                     error_count += 1
-                    print(f"  ❌ 업데이트 실패")
+                    if verbose or error_count <= 5:
+                        print(f"  ❌ [{ann_id}] 업데이트 실패")
             except Exception as e:
                 error_count += 1
-                print(f"  ❌ 오류: {e}")
+                if verbose or error_count <= 5:
+                    print(f"  ❌ [{ann_id}] 오류: {e}")
         
-        # API 제한 방지
-        time.sleep(0.5)
+        # API 제한 방지 (수정된 것만)
+        if updated:
+            time.sleep(0.2)
     
     # 결과 출력
     print("\n" + "="*60)
