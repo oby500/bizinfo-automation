@@ -129,7 +129,7 @@ jobs:
           echo "📎 Step 4: 전체 첨부파일 처리 (Full 모드)..."
           export PROCESSING_LIMIT=0
         fi
-        python scripts/kstartup_attachment_enhanced.py || echo "첨부파일 처리 실패 - 건너뛰기"
+        python scripts/kstartup_attachment_enhanced_fixed.py || echo "첨부파일 처리 실패 - 건너뛰기"
           
     - name: Generate Final Report
       if: always()
