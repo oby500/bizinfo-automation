@@ -73,6 +73,17 @@ def get_file_type_by_signature(url, text_hint=None):
         else:
             return 'FILE'
         
+        # 텍스트 파일 체크 (ASCII 또는 UTF-8)
+        try:
+            # 텍스트로 디코딩 시도
+            decoded = content.decode('utf-8')
+            # 텍스트 파일 특징 확인 (대부분 인쇄 가능한 문자)
+            printable_ratio = sum(1 for c in decoded if c.isprintable() or c.isspace()) / len(decoded)
+            if printable_ratio > 0.95:
+                return 'TXT'
+        except:
+            pass
+        
         # 바이너리 시그니처로 타입 판단
         if len(content) >= 4:
             # PDF
@@ -85,8 +96,8 @@ def get_file_type_by_signature(url, text_hint=None):
                 full_response = session.get(url, timeout=15)
                 full_content = full_response.content[:5000]
                 
-                # HWPX
-                if b'hwpml' in full_content or b'HWP' in full_content:
+                # HWPX (반드시 hwpml이 있어야 함)
+                if b'hwpml' in full_content:
                     return 'HWPX'
                 elif b'word/' in full_content:
                     return 'DOCX'
@@ -97,8 +108,27 @@ def get_file_type_by_signature(url, text_hint=None):
                 else:
                     return 'ZIP'
             
-            # MS Office 97-2003
+            # HWP (실제 HWP 시그니처)
+            elif b'HWP Document File' in content[:32]:
+                return 'HWP'
+            
+            # MS Office 97-2003 (Compound File Binary Format)
             elif content[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+                # 더 자세한 판단을 위해 추가 바이트 확인
+                full_response = session.get(url, timeout=15)
+                full_content = full_response.content[:5000]
+                
+                # HWP 5.0도 이 시그니처를 사용할 수 있음
+                if b'Hwp' in full_content or b'HWP' in full_content:
+                    return 'HWP'
+                elif b'Microsoft Excel' in full_content or b'Worksheet' in full_content:
+                    return 'XLS'
+                elif b'Microsoft PowerPoint' in full_content or b'PowerPoint' in full_content:
+                    return 'PPT'
+                elif b'Microsoft Word' in full_content or b'Word.Document' in full_content:
+                    return 'DOC'
+                
+                # 힌트가 있으면 사용
                 if text_hint:
                     text_lower = text_hint.lower()
                     if 'xls' in text_lower or '엑셀' in text_lower:
@@ -107,11 +137,11 @@ def get_file_type_by_signature(url, text_hint=None):
                         return 'PPT'
                     elif 'doc' in text_lower or '워드' in text_lower:
                         return 'DOC'
+                    elif 'hwp' in text_lower or '한글' in text_lower:
+                        return 'HWP'
+                
+                # 기본값은 DOC
                 return 'DOC'
-            
-            # HWP
-            elif b'HWP Document' in content[:32] or b'HWP' in content[:32]:
-                return 'HWP'
             
             # 이미지
             elif content[:3] == b'\xff\xd8\xff':
