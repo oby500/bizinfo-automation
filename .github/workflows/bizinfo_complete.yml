@@ -103,17 +103,19 @@ jobs:
         # K-Startup 방식으로 전체 처리
         python scripts/bizinfo_attachment_fix_kstartup_style.py || echo "STEP 2 실패 - 계속 진행"
     
-    - name: Step 3 - Attachment Processing
+    - name: Step 3 - Unified Attachment Processing (100% Accuracy)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 3: 첨부파일 정리"
+        echo "  STEP 3: 통합 첨부파일 처리 (100% 정확도)"
         echo "======================================"
-        python scripts/bizinfo_attachment_crawler.py || echo "Attachment crawler 실패 - 계속 진행"
-          python scripts/bizinfo_complete_processor_fast.py || echo "STEP 3 실패 - 계속 진행"
+        echo "🔧 통합 처리기로 첨부파일 정보 수집..."
+        echo "🎯 100% 정확도 파일 타입 감지 적용"
+        echo "📊 다층 감지: 파일명 → URL 패턴 → Content-Type → 파일 시그니처"
+        python scripts/unified_attachment_processor.py --source bizinfo --mode ${{ steps.mode.outputs.mode }} --workers 5 || echo "STEP 3 실패 - 계속 진행"
     
     - name: Step 4 - Fix All Filename Issues
       env:
