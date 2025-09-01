@@ -23,7 +23,7 @@ def test_specific_announcement(announcement_id):
     
     # 데이터베이스에서 해당 공고 조회
     result = supabase.table('kstartup_complete')\
-        .select('announcement_id, biz_pbanc_nm, attachment_urls, attachment_count')\
+        .select('announcement_id, pblanc_nm, attachment_urls, attachment_count')\
         .eq('announcement_id', announcement_id)\
         .execute()
     
@@ -32,7 +32,7 @@ def test_specific_announcement(announcement_id):
         return
     
     record = result.data[0]
-    print(f"📌 공고명: {record.get('biz_pbanc_nm', 'No Title')}")
+    print(f"📌 공고명: {record.get('pblanc_nm', 'No Title')}")
     print(f"📎 첨부파일 수: {record.get('attachment_count', 0)}개")
     
     # attachment_urls 파싱
@@ -104,7 +104,7 @@ def test_recent_announcements():
     
     # 최근 10개 공고 조회
     result = supabase.table('kstartup_complete')\
-        .select('announcement_id, biz_pbanc_nm, attachment_urls, attachment_count')\
+        .select('announcement_id, pblanc_nm, attachment_urls, attachment_count')\
         .gt('attachment_count', 0)\
         .order('created_at', desc=True)\
         .limit(10)\
