@@ -1,31 +1,12 @@
-name: 🔍 Validate Attachment Accuracy (100% Target)
+name: 📊 Validate Attachments
 
 on:
   workflow_dispatch:
-    inputs:
-      target:
-        description: '검증 대상'
-        required: true
-        default: 'both'
-        type: choice
-        options:
-        - both       # K-Startup + BizInfo
-        - kstartup   # K-Startup만
-        - bizinfo    # BizInfo만
-      fix_mode:
-        description: '수정 모드'
-        required: true
-        default: 'check'
-        type: choice
-        options:
-        - check      # 검증만
-        - fix        # 자동 수정 (100% 정확도 달성)
   schedule:
-    - cron: '0 0 * * 0'  # 매주 일요일 오전 9시 (KST)
+    - cron: '0 */6 * * *'  # 6시간마다 실행
 
 jobs:
   validate:
-    name: 첨부파일 정확도 검증 (100% 목표)
     runs-on: ubuntu-latest
     
     steps:
@@ -34,42 +15,16 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11'
       
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 supabase python-dotenv
+          pip install supabase
       
-      - name: Validate Attachments with 100% Accuracy Check
+      - name: Validate Attachments
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          TARGET: ${{ github.event.inputs.target || 'both' }}
-          FIX_MODE: ${{ github.event.inputs.fix_mode || 'check' }}
         run: |
-          echo "======================================"
-          echo "  🎯 100% 정확도 목표 검증"
-          echo "======================================"
-          echo "📊 다층 감지: 파일명 → URL 패턴 → Content-Type → 파일 시그니처"
-          echo "🔍 검증 대상: ${TARGET}"
-          echo "🔧 수정 모드: ${FIX_MODE}"
-          
-          # 100% 정확도 달성을 위한 검증 스크립트 실행
-          if [ -f "scripts/verify_attachment_collection.py" ]; then
-            python scripts/verify_attachment_collection.py
-          else
-            echo "⚠️ 검증 스크립트 없음 - 기본 검증 실행"
-            python scripts/validate_attachments.py
-          fi
-          
-          # 수정 모드인 경우 자동 수정 실행
-          if [ "${FIX_MODE}" = "fix" ]; then
-            echo ""
-            echo "🔧 FILE 타입 자동 수정 시작..."
-            if [ -f "scripts/fix_remaining_file_types_final.py" ]; then
-              python scripts/fix_remaining_file_types_final.py
-            else
-              echo "⚠️ 수정 스크립트 없음"
-            fi
-          fi
+          python scripts/validate_attachments.py

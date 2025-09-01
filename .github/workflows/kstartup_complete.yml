@@ -119,19 +119,16 @@ jobs:
         fi
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: K-Startup 첨부파일 처리 (100% 정확도 개선)
-    - name: Step 4 - K-Startup Attachment Processing (100% Accuracy)
+    # Step 4: K-Startup 첨부파일 처리 (모드별 처리)
+    - name: Step 4 - K-Startup Attachment Processing (Enhanced)
       run: |
         if [ "${{ steps.mode.outputs.mode }}" = "daily" ]; then
           echo "📎 Step 4: 최근 50개 첨부파일 처리 (Daily 모드)..."
-          echo "🎯 100% 정확도 파일 타입 감지 적용"
           export PROCESSING_LIMIT=50
         else
           echo "📎 Step 4: 전체 첨부파일 처리 (Full 모드)..."
-          echo "🎯 100% 정확도 파일 타입 감지 적용"
           export PROCESSING_LIMIT=0
         fi
-        echo "📊 다층 감지: 파일명 → URL 패턴 → Content-Type → 파일 시그니처"
         python scripts/kstartup_attachment_enhanced.py || echo "첨부파일 처리 실패 - 건너뛰기"
           
     - name: Generate Final Report
