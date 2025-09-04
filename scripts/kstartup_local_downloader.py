@@ -22,8 +22,14 @@ url = os.environ.get('SUPABASE_URL')
 key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
 supabase = create_client(url, key)
 
-# 다운로드 경로
-DOWNLOAD_BASE = 'downloads'
+# 다운로드 경로 (GitHub Actions에서는 상대경로, 로컬에서는 절대경로)
+if os.path.exists('/github/workspace'):
+    # GitHub Actions 환경
+    DOWNLOAD_BASE = 'downloads'
+else:
+    # 로컬 환경
+    DOWNLOAD_BASE = r'E:\gov-support-automation\downloads'
+    
 KSTARTUP_DIR = os.path.join(DOWNLOAD_BASE, 'kstartup')
 
 def ensure_download_dir():
