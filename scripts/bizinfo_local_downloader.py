@@ -103,8 +103,8 @@ def parse_attachment_urls(attachment_urls_str):
 
 def process_bizinfo_record(record):
     """BizInfo 레코드 처리"""
-    pbln_id = record.get('pbln_id', '')
-    title = record.get('pbln_nm', '')
+    pbln_id = record.get('pblanc_id', '')
+    title = record.get('pblanc_nm', '')
     attachment_urls_str = record.get('attachment_urls', '')
     
     if not attachment_urls_str:
@@ -122,10 +122,10 @@ def process_bizinfo_record(record):
     
     for i, (url, original_filename) in enumerate(attachment_urls):
         try:
-            # 파일명 생성 (ID_형식으로 일단 저장)
+            # 파일명 생성 (PBLN ID 그대로 사용)
             safe_title = safe_filename(title)[:50]  # 제목 50자로 제한
             file_ext = os.path.splitext(original_filename)[1] if '.' in original_filename else ''
-            filename = f"ID_{pbln_id}_{safe_title}_{i+1}{file_ext}"
+            filename = f"{pbln_id}_{safe_title}_{i+1}{file_ext}"
             filename = safe_filename(filename)
             
             filepath = os.path.join(BIZINFO_DIR, filename)
@@ -163,7 +163,7 @@ def main():
         # BizInfo 데이터 조회
         print("🔍 BizInfo 데이터 조회 중...")
         result = supabase.table('bizinfo_complete')\
-            .select('pbln_id, pbln_nm, attachment_urls, attachment_count')\
+            .select('pblanc_id, pblanc_nm, attachment_urls, atch_file_co')\
             .not_.is_('attachment_urls', 'null')\
             .not_.eq('attachment_urls', '')\
             .limit(100)\
