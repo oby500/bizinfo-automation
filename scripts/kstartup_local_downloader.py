@@ -176,13 +176,14 @@ def main():
     ensure_download_dir()
     
     try:
-        # K-Startup 데이터 조회
+        # K-Startup 데이터 조회 (150개 공고문)
         print("K-Startup 데이터 조회 중...")
         result = supabase.table('kstartup_complete')\
             .select('announcement_id, biz_pbanc_nm, attachment_urls, attachment_count')\
             .not_.is_('attachment_urls', 'null')\
             .not_.eq('attachment_urls', '')\
-            .limit(100)\
+            .order('created_at', desc=True)\
+            .limit(150)\
             .execute()
         
         if not result.data:

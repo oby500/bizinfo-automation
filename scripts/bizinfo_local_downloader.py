@@ -191,11 +191,12 @@ def main():
             
         print(f'기본 조회 성공: {len(result.data)}개')
         
-        # attachment_urls가 있는 레코드만 조회 (간단한 방식)
+        # attachment_urls가 있는 레코드만 조회 (150개 공고문)
         result = supabase.table('bizinfo_complete')\
             .select('pblanc_id, pblanc_nm, attachment_urls')\
             .not_.is_('attachment_urls', 'null')\
-            .limit(10)\
+            .order('created_at', desc=True)\
+            .limit(150)\
             .execute()
         
         if not result.data:
