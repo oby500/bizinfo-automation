@@ -29,7 +29,7 @@ BIZINFO_DIR = os.path.join(DOWNLOAD_BASE, 'bizinfo')
 def ensure_download_dir():
     """다운로드 디렉토리 생성"""
     os.makedirs(BIZINFO_DIR, exist_ok=True)
-    print(f"📁 다운로드 폴더: {BIZINFO_DIR}")
+    print(f"다운로드 폴더: {BIZINFO_DIR}")
 
 def safe_filename(filename):
     """안전한 파일명 생성"""
@@ -110,12 +110,12 @@ def process_bizinfo_record(record):
     if not attachment_urls_str:
         return 0
     
-    print(f"📎 처리 중: {pbln_id} - {title[:50]}...")
+    print(f"처리 중: {pbln_id} - {title[:50]}...")
     
     # 첨부파일 URL 파싱
     attachment_urls = parse_attachment_urls(attachment_urls_str)
     if not attachment_urls:
-        print("    ⚠️ 첨부파일 URL 없음")
+        print("    첨부파일 URL 없음")
         return 0
     
     downloaded_count = 0
@@ -132,28 +132,28 @@ def process_bizinfo_record(record):
             
             # 이미 다운로드된 파일 스킵
             if os.path.exists(filepath):
-                print(f"    ⏭️ 이미 존재: {filename}")
+                print(f"    이미 존재: {filename}")
                 continue
             
             # 파일 다운로드
-            print(f"    ⬇️ 다운로드: {filename}")
+            print(f"    다운로드: {filename}")
             success, file_size = download_file(url, filepath)
             
             if success:
                 downloaded_count += 1
-                print(f"    ✅ 완료: {filename} ({file_size:,} bytes)")
+                print(f"    완료: {filename} ({file_size:,} bytes)")
             else:
-                print(f"    ❌ 실패: {filename}")
+                print(f"    실패: {filename}")
                 
         except Exception as e:
-            print(f"    ❌ 오류: {str(e)}")
+            print(f"    오류: {str(e)}")
     
     return downloaded_count
 
 def main():
     """메인 실행"""
     print("="*70)
-    print("📎 BizInfo 첨부파일 로컬 다운로드")
+    print("BizInfo 첨부파일 로컬 다운로드")
     print("="*70)
     
     # 다운로드 폴더 생성
@@ -161,19 +161,31 @@ def main():
     
     try:
         # BizInfo 데이터 조회
-        print("🔍 BizInfo 데이터 조회 중...")
+        print("BizInfo 데이터 조회 중...")
+        # 먼저 기본 조회 테스트
         result = supabase.table('bizinfo_complete')\
-            .select('pblanc_id, pblanc_nm, attachment_urls, atch_file_co')\
+            .select('pblanc_id, pblanc_nm')\
+            .limit(5)\
+            .execute()
+            
+        if not result.data:
+            print('기본 조회 실패')
+            return
+            
+        print(f'기본 조회 성공: {len(result.data)}개')
+        
+        # attachment_urls가 있는 레코드만 조회 (간단한 방식)
+        result = supabase.table('bizinfo_complete')\
+            .select('pblanc_id, pblanc_nm, attachment_urls')\
             .not_.is_('attachment_urls', 'null')\
-            .not_.eq('attachment_urls', '')\
-            .limit(100)\
+            .limit(10)\
             .execute()
         
         if not result.data:
-            print("❌ 데이터가 없습니다")
+            print("데이터가 없습니다")
             return
         
-        print(f"📋 처리 대상: {len(result.data)}개")
+        print(f"처리 대상: {len(result.data)}개")
         
         # 각 레코드 처리
         total_downloaded = 0
@@ -183,13 +195,13 @@ def main():
             time.sleep(0.5)  # API 호출 간격
         
         print("="*70)
-        print(f"🎉 BizInfo 다운로드 완료!")
-        print(f"📊 총 다운로드: {total_downloaded}개 파일")
-        print(f"📁 저장 위치: {BIZINFO_DIR}")
+        print(f"BizInfo 다운로드 완료!")
+        print(f"총 다운로드: {total_downloaded}개 파일")
+        print(f"저장 위치: {BIZINFO_DIR}")
         print("="*70)
         
     except Exception as e:
-        print(f"❌ 오류 발생: {str(e)}")
+        print(f"오류 발생: {str(e)}")
         return 1
     
     return 0
