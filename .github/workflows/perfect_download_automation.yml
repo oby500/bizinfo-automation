@@ -2,7 +2,7 @@ name: Perfect Download Automation
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # 매일 UTC 오전 2시 (한국시간 오전 11시)
+    - cron: '0 2 * * 1-5'  # 평일 UTC 오전 2시 (한국시간 오전 11시)
   workflow_dispatch:
     inputs:
       mode:
@@ -60,7 +60,7 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "🚀 Starting K-Startup download process..."
-        python scripts/kstartup_attachment_enhanced_fixed.py
+        python scripts/kstartup_local_downloader.py
         
     - name: Verify K-Startup downloads
       run: |
@@ -104,7 +104,7 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "🚀 Starting BizInfo download process..."
-        python scripts/bizinfo_attachment_downloader.py
+        python scripts/bizinfo_local_downloader.py
         
     - name: Fix BizInfo filenames  
       if: github.event.inputs.mode != 'verify_only'

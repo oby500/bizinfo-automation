@@ -12,7 +12,8 @@ on:
         - daily    # 최근 7일 데이터만 (빠른 처리)
         - full     # 전체 데이터 처리 (완전 점검)
   schedule:
-    - cron: '0 8 * * 1-5'  # 평일 오후 5시 (KST)
+    - cron: '0 7 * * 1-5'   # 평일 오후 4시 (KST)
+    - cron: '30 7 * * 1-5'  # 평일 오후 4시 30분 (KST)
 
 jobs:
   collect:
