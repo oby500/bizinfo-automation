@@ -77,27 +77,38 @@ def download_file(url, filepath, max_retries=3):
     
     return False, 0
 
-def parse_attachment_urls(attachment_urls_str):
+def parse_attachment_urls(attachment_urls_data):
     """첨부파일 URL 파싱"""
-    if not attachment_urls_str:
+    if not attachment_urls_data:
         return []
     
     urls = []
     try:
-        # JSON 형식으로 파싱 시도
-        if attachment_urls_str.startswith('['):
-            parsed = json.loads(attachment_urls_str)
-            for item in parsed:
+        # 이미 리스트인 경우 (Supabase에서 JSON으로 자동 파싱됨)
+        if isinstance(attachment_urls_data, list):
+            for item in attachment_urls_data:
                 if isinstance(item, dict) and 'url' in item:
-                    urls.append((item['url'], item.get('filename', 'attachment')))
+                    original_filename = item.get('original_filename', item.get('display_filename', 'attachment'))
+                    urls.append((item['url'], original_filename))
                 elif isinstance(item, str):
                     urls.append((item, 'attachment'))
-        else:
-            # 단순 문자열인 경우
-            urls.append((attachment_urls_str, 'attachment'))
-    except:
-        # 파싱 실패 시 문자열 그대로 사용
-        urls.append((attachment_urls_str, 'attachment'))
+        # 문자열인 경우 JSON 파싱 시도
+        elif isinstance(attachment_urls_data, str):
+            if attachment_urls_data.startswith('['):
+                parsed = json.loads(attachment_urls_data)
+                for item in parsed:
+                    if isinstance(item, dict) and 'url' in item:
+                        original_filename = item.get('original_filename', item.get('display_filename', 'attachment'))
+                        urls.append((item['url'], original_filename))
+                    elif isinstance(item, str):
+                        urls.append((item, 'attachment'))
+            else:
+                # 단순 문자열인 경우
+                urls.append((attachment_urls_data, 'attachment'))
+    except Exception as e:
+        print(f"    URL 파싱 오류: {str(e)}")
+        # 파싱 실패 시 빈 리스트 반환
+        return []
     
     return urls
 
@@ -105,15 +116,15 @@ def process_bizinfo_record(record):
     """BizInfo 레코드 처리"""
     pbln_id = record.get('pblanc_id', '')
     title = record.get('pblanc_nm', '')
-    attachment_urls_str = record.get('attachment_urls', '')
+    attachment_urls_data = record.get('attachment_urls', '')
     
-    if not attachment_urls_str:
+    if not attachment_urls_data:
         return 0
     
     print(f"처리 중: {pbln_id} - {title[:50]}...")
     
     # 첨부파일 URL 파싱
-    attachment_urls = parse_attachment_urls(attachment_urls_str)
+    attachment_urls = parse_attachment_urls(attachment_urls_data)
     if not attachment_urls:
         print("    첨부파일 URL 없음")
         return 0
