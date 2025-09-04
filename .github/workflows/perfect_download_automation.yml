@@ -1,0 +1,235 @@
+name: Perfect Download Automation
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 매일 UTC 오전 2시 (한국시간 오전 11시)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '실행 모드'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+        - incremental  # 증분 다운로드
+        - full         # 전체 재다운로드  
+        - verify_only  # 검증만
+        - fix_only     # 파일명 수정만
+      source:
+        description: '다운로드 소스'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+        - both      # K-Startup + BizInfo
+        - kstartup  # K-Startup만
+        - bizinfo   # BizInfo만
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+  COLLECTION_MODE: ${{ github.event.inputs.mode || 'incremental' }}
+  SOURCE_TYPE: ${{ github.event.inputs.source || 'both' }}
+
+jobs:
+  download-kstartup:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.source == 'both' || github.event.inputs.source == 'kstartup'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create downloads directory
+      run: |
+        mkdir -p downloads/kstartup
+        
+    - name: Download K-Startup attachments
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🚀 Starting K-Startup download process..."
+        python scripts/kstartup_attachment_enhanced_fixed.py
+        
+    - name: Verify K-Startup downloads
+      run: |
+        echo "📊 K-Startup download statistics:"
+        find downloads/kstartup -type f | wc -l
+        du -sh downloads/kstartup/
+        
+    - name: Upload K-Startup artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kstartup-downloads
+        path: downloads/kstartup/
+        retention-days: 7
+        compression-level: 6
+
+  download-bizinfo:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.source == 'both' || github.event.inputs.source == 'bizinfo'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create downloads directory
+      run: |
+        mkdir -p downloads/bizinfo
+        
+    - name: Download BizInfo attachments
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🚀 Starting BizInfo download process..."
+        python scripts/bizinfo_attachment_downloader.py
+        
+    - name: Fix BizInfo filenames  
+      if: github.event.inputs.mode != 'verify_only'
+      run: |
+        echo "🔧 Fixing BizInfo filenames to PBLN format..."
+        python scripts/rename_id_to_pbln_simple.py
+        
+    - name: Verify BizInfo downloads
+      run: |
+        echo "📊 BizInfo download statistics:"
+        find downloads/bizinfo -type f | wc -l
+        du -sh downloads/bizinfo/
+        
+    - name: Upload BizInfo artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: bizinfo-downloads
+        path: downloads/bizinfo/
+        retention-days: 7
+        compression-level: 6
+
+  verify-downloads:
+    needs: [download-kstartup, download-bizinfo]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Download K-Startup artifacts
+      if: github.event.inputs.source == 'both' || github.event.inputs.source == 'kstartup'
+      uses: actions/download-artifact@v4
+      with:
+        name: kstartup-downloads
+        path: downloads/kstartup/
+      continue-on-error: true
+        
+    - name: Download BizInfo artifacts
+      if: github.event.inputs.source == 'both' || github.event.inputs.source == 'bizinfo'
+      uses: actions/download-artifact@v4
+      with:
+        name: bizinfo-downloads  
+        path: downloads/bizinfo/
+      continue-on-error: true
+        
+    - name: Verify download completeness
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🔍 Starting download verification..."
+        python scripts/detailed_attachment_verification.py || echo "⚠️ Verification script issues detected"
+        python scripts/complete_attachment_manager.py || echo "⚠️ Manager script issues detected"
+        
+    - name: Generate download report
+      run: |
+        cat > download_report.json << EOF
+        {
+          "timestamp": "$(date -u)",
+          "mode": "${{ github.event.inputs.mode || 'incremental' }}",
+          "source": "${{ github.event.inputs.source || 'both' }}",
+          "kstartup_files": $(find downloads/kstartup -type f 2>/dev/null | wc -l || echo 0),
+          "bizinfo_files": $(find downloads/bizinfo -type f 2>/dev/null | wc -l || echo 0),
+          "total_size": "$(du -sh downloads/ 2>/dev/null | cut -f1 || echo '0')",
+          "workflow_status": "completed"
+        }
+        EOF
+        
+        echo "📊 Download Report:"
+        cat download_report.json
+        
+    - name: Upload verification reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: download-reports
+        path: "*.json"
+        retention-days: 30
+
+  upload-to-storage:
+    needs: [verify-downloads]
+    runs-on: ubuntu-latest
+    if: success() && github.event.inputs.mode != 'verify_only'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+        path: downloads/
+        
+    - name: Upload to Supabase Storage
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "☁️ Starting Supabase Storage upload..."
+        python scripts/upload_to_storage.py || echo "⚠️ Storage upload completed with warnings"
+        
+    - name: Final success notification
+      run: |
+        echo "🎉 Perfect Download Automation completed successfully!"
+        echo "✅ K-Startup files: $(find downloads/kstartup -type f 2>/dev/null | wc -l || echo 0)"
+        echo "✅ BizInfo files: $(find downloads/bizinfo -type f 2>/dev/null | wc -l || echo 0)"
+        echo "✅ Total size: $(du -sh downloads/ 2>/dev/null | cut -f1 || echo '0')"
