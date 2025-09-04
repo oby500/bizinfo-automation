@@ -2,7 +2,7 @@ name: Perfect Download Automation
 
 on:
   schedule:
-    - cron: '0 2 * * 1-5'  # 평일 UTC 오전 2시 (한국시간 오전 11시)
+    - cron: '0 2 * * *'  # 매일 UTC 오전 2시 (한국시간 오전 11시)
   workflow_dispatch:
     inputs:
       mode:
