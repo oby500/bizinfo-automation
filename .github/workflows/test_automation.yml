@@ -20,7 +20,14 @@ env:
 jobs:
   test-environment:
     runs-on: ubuntu-latest
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
     steps:
+    - name: Display Korean Time
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        echo "📋 테스트 모드: ${{ github.event.inputs.test_mode }}"
+    
     - name: Checkout code
       uses: actions/checkout@v4
       

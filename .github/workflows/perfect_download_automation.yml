@@ -2,8 +2,11 @@ name: Perfect Download Automation
 
 on:
   schedule:
-    - cron: '0 23 * * 1-5'  # 평일 UTC 오후 11시 (한국시간 오전 8시) - K-Startup
-    - cron: '0 8 * * 1-5'   # 평일 UTC 오전 8시 (한국시간 오후 5시) - BizInfo
+    # UTC 기준 (한국시간 -9시간)
+    # KST 08:00 = UTC 23:00 (전날)
+    # KST 17:00 = UTC 08:00
+    - cron: '0 23 * * 0-4'  # 한국시간 월-금 오전 8시 (모든 소스 다운로드)
+    - cron: '0 8 * * 1-5'   # 한국시간 월-금 오후 5시 (모든 소스 다운로드)
   workflow_dispatch:
     inputs:
       mode:
@@ -33,10 +36,39 @@ env:
   SOURCE_TYPE: ${{ github.event.inputs.source || 'both' }}
 
 jobs:
-  download-kstartup:
+  determine-source:
     runs-on: ubuntu-latest
-    if: github.event.inputs.source == 'both' || github.event.inputs.source == 'kstartup'
+    outputs:
+      source: ${{ steps.set-source.outputs.source }}
+    env:
+      TZ: 'Asia/Seoul'
     steps:
+    - name: Determine source based on schedule
+      id: set-source
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        
+        if [ "${{ github.event_name }}" = "schedule" ]; then
+          # 스케줄 실행 시 항상 both로 설정 (모든 소스 다운로드)
+          echo "source=both" >> $GITHUB_OUTPUT
+          echo "📅 스케줄 실행: 모든 소스 다운로드 (K-Startup + BizInfo)"
+        else
+          echo "source=${{ github.event.inputs.source || 'both' }}" >> $GITHUB_OUTPUT
+          echo "🎯 수동 실행: ${{ github.event.inputs.source || 'both' }}"
+        fi
+
+  download-kstartup:
+    needs: determine-source
+    runs-on: ubuntu-latest
+    if: needs.determine-source.outputs.source == 'both' || needs.determine-source.outputs.source == 'kstartup'
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
+    steps:
+    - name: Display Korean Time
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        echo "🎯 작업 시작: K-Startup 첨부파일 다운로드"
+    
     - name: Checkout code
       uses: actions/checkout@v4
       
@@ -78,9 +110,17 @@ jobs:
         compression-level: 6
 
   download-bizinfo:
+    needs: determine-source
     runs-on: ubuntu-latest
-    if: github.event.inputs.source == 'both' || github.event.inputs.source == 'bizinfo'
+    if: needs.determine-source.outputs.source == 'both' || needs.determine-source.outputs.source == 'bizinfo'
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
     steps:
+    - name: Display Korean Time
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        echo "🎯 작업 시작: BizInfo 첨부파일 다운로드"
+    
     - name: Checkout code
       uses: actions/checkout@v4
       
@@ -128,9 +168,11 @@ jobs:
         compression-level: 6
 
   verify-downloads:
-    needs: [download-kstartup, download-bizinfo]
+    needs: [determine-source, download-kstartup, download-bizinfo]
     runs-on: ubuntu-latest
     if: always()
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

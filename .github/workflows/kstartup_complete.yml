@@ -12,13 +12,18 @@ on:
         - daily    # 최근 200개만 (2-3초)
         - full     # 전체 259페이지 (30-60초)
   schedule:
-    - cron: '0 22 * * 1-5'   # 평일 오전 7시 (KST)
-    - cron: '30 22 * * 1-5'  # 평일 오전 7시 30분 (KST)
+    # UTC 기준 (한국시간 -9시간)
+    # KST 07:00 = UTC 22:00 (전날)
+    # KST 07:30 = UTC 22:30 (전날)
+    - cron: '0 22 * * 0-4'   # 한국시간 월-금 오전 7시
+    - cron: '30 22 * * 0-4'  # 한국시간 월-금 오전 7시 30분
 
 jobs:
   collect:
     name: K-Startup 자동 처리
     runs-on: ubuntu-latest
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
     steps:
     - uses: actions/checkout@v3
     
@@ -34,6 +39,9 @@ jobs:
     - name: Determine Mode
       id: mode
       run: |
+        # 한국 시간 출력
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        
         if [ "${{ github.event_name }}" = "schedule" ]; then
           echo "mode=daily" >> $GITHUB_OUTPUT
           echo "📅 스케줄 실행: daily 모드"
