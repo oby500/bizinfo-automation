@@ -36,6 +36,10 @@ session.headers.update({
     'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
     'Referer': 'https://www.k-startup.go.kr/'
 })
+# SSL 검증 비활성화 (테스트 목적)
+session.verify = False
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def extract_attachment_urls_simple(page_url):
     """첨부파일 URL만 단순 추출"""
@@ -87,8 +91,7 @@ def process_record(record):
             # 데이터베이스 업데이트 - URL만 저장
             result = supabase.table('kstartup_complete')\
                 .update({
-                    'attachment_urls': attachments,
-                    'attachment_count': len(attachments)
+                    'attachment_urls': attachments
                 })\
                 .eq('announcement_id', announcement_id)\
                 .execute()
@@ -103,8 +106,7 @@ def process_record(record):
             # 첨부파일이 없는 경우도 업데이트
             result = supabase.table('kstartup_complete')\
                 .update({
-                    'attachment_urls': [],
-                    'attachment_count': 0
+                    'attachment_urls': []
                 })\
                 .eq('announcement_id', announcement_id)\
                 .execute()
@@ -138,7 +140,7 @@ def main():
     if processing_limit > 0:
         # Daily 모드: 최근 N개만
         all_records = supabase.table('kstartup_complete')\
-            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls, attachment_count')\
+            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls')\
             .order('created_at', desc=True)\
             .limit(processing_limit * 2)\
             .execute()
@@ -146,15 +148,15 @@ def main():
     else:
         # Full 모드: 전체
         all_records = supabase.table('kstartup_complete')\
-            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls, attachment_count')\
+            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls')\
             .execute()
         print("📌 Full 모드: 전체 데이터 처리")
     
     needs_processing = []
     
     for record in all_records.data:
-        # 첨부파일 정보가 없거나 오래된 형식인 경우 재처리
-        if not record.get('attachment_urls') or record.get('attachment_count', 0) == 0:
+        # 첨부파일 정보가 없는 경우 재처리
+        if not record.get('attachment_urls'):
             needs_processing.append(record)
     
     # Daily 모드에서는 최대 N개만 처리
