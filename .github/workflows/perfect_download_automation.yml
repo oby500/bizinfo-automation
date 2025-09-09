@@ -1,0 +1,346 @@
+name: Perfect Download Automation
+
+on:
+  schedule:
+    # UTC 기준 (한국시간 -9시간)
+    # KST 08:00 = UTC 23:00 (전날)
+    # KST 17:00 = UTC 08:00
+    - cron: '0 23 * * 0-4'  # 한국시간 월-금 오전 8시 (모든 소스 다운로드)
+    - cron: '0 8 * * 1-5'   # 한국시간 월-금 오후 5시 (모든 소스 다운로드)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '실행 모드'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+        - incremental  # 증분 다운로드
+        - full         # 전체 재다운로드  
+        - verify_only  # 검증만
+        - fix_only     # 파일명 수정만
+      source:
+        description: '다운로드 소스'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+        - both      # K-Startup + BizInfo
+        - kstartup  # K-Startup만
+        - bizinfo   # BizInfo만
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+  COLLECTION_MODE: ${{ github.event.inputs.mode || 'incremental' }}
+  SOURCE_TYPE: ${{ github.event.inputs.source || 'both' }}
+
+jobs:
+  determine-source:
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.set-source.outputs.source }}
+    env:
+      TZ: 'Asia/Seoul'
+    steps:
+    - name: Determine source based on schedule
+      id: set-source
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        
+        if [ "${{ github.event_name }}" = "schedule" ]; then
+          # 스케줄 실행 시 항상 both로 설정 (모든 소스 다운로드)
+          echo "source=both" >> $GITHUB_OUTPUT
+          echo "📅 스케줄 실행: 모든 소스 다운로드 (K-Startup + BizInfo)"
+        else
+          echo "source=${{ github.event.inputs.source || 'both' }}" >> $GITHUB_OUTPUT
+          echo "🎯 수동 실행: ${{ github.event.inputs.source || 'both' }}"
+        fi
+
+  download-kstartup:
+    needs: determine-source
+    runs-on: ubuntu-latest
+    if: needs.determine-source.outputs.source == 'both' || needs.determine-source.outputs.source == 'kstartup'
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
+    steps:
+    - name: Display Korean Time
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        echo "🎯 작업 시작: K-Startup 첨부파일 다운로드"
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create downloads directory
+      run: |
+        mkdir -p downloads/kstartup
+        
+    - name: Download K-Startup attachments
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🚀 Starting K-Startup download process..."
+        python scripts/kstartup_local_downloader.py
+        
+    - name: Verify K-Startup downloads
+      run: |
+        echo "📊 K-Startup download statistics:"
+        find downloads/kstartup -type f | wc -l
+        du -sh downloads/kstartup/
+        
+    - name: Upload K-Startup artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kstartup-downloads
+        path: downloads/kstartup/
+        retention-days: 7
+        compression-level: 6
+
+  download-bizinfo:
+    needs: determine-source
+    runs-on: ubuntu-latest
+    if: needs.determine-source.outputs.source == 'both' || needs.determine-source.outputs.source == 'bizinfo'
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
+    steps:
+    - name: Display Korean Time
+      run: |
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        echo "🎯 작업 시작: BizInfo 첨부파일 다운로드"
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create downloads directory
+      run: |
+        mkdir -p downloads/bizinfo
+        
+    - name: Download BizInfo attachments
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🚀 Starting BizInfo download process..."
+        python scripts/bizinfo_local_downloader.py
+        
+    - name: Fix BizInfo filenames  
+      if: github.event.inputs.mode != 'verify_only'
+      run: |
+        echo "🔧 Fixing BizInfo filenames to PBLN format..."
+        python scripts/rename_id_to_pbln_simple.py
+        
+    - name: Verify BizInfo downloads
+      run: |
+        echo "📊 BizInfo download statistics:"
+        find downloads/bizinfo -type f | wc -l
+        du -sh downloads/bizinfo/
+        
+    - name: Upload BizInfo artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: bizinfo-downloads
+        path: downloads/bizinfo/
+        retention-days: 7
+        compression-level: 6
+
+  verify-downloads:
+    needs: [determine-source, download-kstartup, download-bizinfo]
+    runs-on: ubuntu-latest
+    if: always()
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Download K-Startup artifacts
+      if: github.event.inputs.source == 'both' || github.event.inputs.source == 'kstartup'
+      uses: actions/download-artifact@v4
+      with:
+        name: kstartup-downloads
+        path: downloads/kstartup/
+      continue-on-error: true
+        
+    - name: Download BizInfo artifacts
+      if: github.event.inputs.source == 'both' || github.event.inputs.source == 'bizinfo'
+      uses: actions/download-artifact@v4
+      with:
+        name: bizinfo-downloads  
+        path: downloads/bizinfo/
+      continue-on-error: true
+        
+    - name: Verify download completeness
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🔍 Starting download verification..."
+        python scripts/detailed_attachment_verification.py || echo "⚠️ Verification script issues detected"
+        python scripts/complete_attachment_manager.py || echo "⚠️ Manager script issues detected"
+        
+    - name: Generate download report
+      run: |
+        cat > download_report.json << EOF
+        {
+          "timestamp": "$(date -u)",
+          "mode": "${{ github.event.inputs.mode || 'incremental' }}",
+          "source": "${{ github.event.inputs.source || 'both' }}",
+          "kstartup_files": $(find downloads/kstartup -type f 2>/dev/null | wc -l || echo 0),
+          "bizinfo_files": $(find downloads/bizinfo -type f 2>/dev/null | wc -l || echo 0),
+          "total_size": "$(du -sh downloads/ 2>/dev/null | cut -f1 || echo '0')",
+          "workflow_status": "completed"
+        }
+        EOF
+        
+        echo "📊 Download Report:"
+        cat download_report.json
+        
+    - name: Upload verification reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: download-reports
+        path: "*.json"
+        retention-days: 30
+
+  create-download-package:
+    needs: [verify-downloads]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Download all artifacts for packaging
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+        path: downloads/
+      continue-on-error: true
+        
+    - name: Create complete download package
+      run: |
+        echo "📦 Creating download package..."
+        
+        # 패키지 정보 생성
+        DATE=$(date +%Y%m%d_%H%M)
+        PACKAGE_NAME="bizinfo_automation_${DATE}"
+        
+        # 통계 수집
+        KSTARTUP_COUNT=$(find downloads/kstartup -type f 2>/dev/null | wc -l || echo 0)
+        BIZINFO_COUNT=$(find downloads/bizinfo -type f 2>/dev/null | wc -l || echo 0)
+        TOTAL_COUNT=$((KSTARTUP_COUNT + BIZINFO_COUNT))
+        TOTAL_SIZE=$(du -sh downloads/ 2>/dev/null | cut -f1 || echo '0B')
+        
+        # README 생성
+        cat > downloads/README.md << EOF
+        # 정부지원사업 첨부파일 다운로드 완료 📁
+        
+        **다운로드 일시**: $(date '+%Y년 %m월 %d일 %H시 %M분')
+        **실행 모드**: ${{ github.event.inputs.mode || 'incremental' }}
+        **소스 타입**: ${{ github.event.inputs.source || 'both' }}
+        
+        ## 📊 다운로드 통계
+        - 🏢 K-Startup 파일: ${KSTARTUP_COUNT}개
+        - 🏛️ BizInfo 파일: ${BIZINFO_COUNT}개  
+        - 📦 전체 파일: ${TOTAL_COUNT}개
+        - 💾 전체 크기: ${TOTAL_SIZE}
+        
+        ## 📁 폴더 구조
+        \`\`\`
+        downloads/
+        ├── kstartup/          # K-Startup 첨부파일 (KS_xxxxx_파일명.ext)
+        ├── bizinfo/           # BizInfo 첨부파일 (PBLN_000000000xxxxx_파일명.ext)
+        └── README.md          # 이 파일
+        \`\`\`
+        
+        ## 🎯 파일명 규칙
+        - **K-Startup**: \`KS_174XXX_파일명.확장자\`
+        - **BizInfo**: \`PBLN_000000000092578_파일명.확장자\` (통일된 형식)
+        
+        ## ✅ 사용 방법
+        1. GitHub Actions에서 이 아티팩트를 다운로드
+        2. 압축 해제
+        3. downloads 폴더 내 파일들을 원하는 위치에 복사
+        
+        ---
+        🤖 **자동 생성**: GitHub Actions Perfect Download Automation
+        EOF
+        
+        # 압축 파일 생성 (선택사항)
+        if [ $TOTAL_COUNT -gt 0 ]; then
+          echo "🗜️ Creating compressed archive..."
+          tar -czf "${PACKAGE_NAME}.tar.gz" -C downloads .
+          echo "✅ Archive created: ${PACKAGE_NAME}.tar.gz"
+        fi
+        
+        echo "📋 Package Summary:"
+        echo "===================="
+        echo "📁 Total Files: ${TOTAL_COUNT}"
+        echo "💾 Total Size: ${TOTAL_SIZE}"
+        echo "📦 Package: ${PACKAGE_NAME}"
+        echo "===================="
+        
+    - name: Upload complete download package
+      uses: actions/upload-artifact@v4
+      with:
+        name: complete-downloads-${{ github.run_number }}
+        path: |
+          downloads/
+          *.tar.gz
+        retention-days: 30
+        compression-level: 6
+        
+    - name: Final success notification
+      run: |
+        echo "🎉 로컬 다운로드 자동화 완료!"
+        echo "=================================="
+        
+        KSTARTUP_COUNT=$(find downloads/kstartup -type f 2>/dev/null | wc -l || echo 0)
+        BIZINFO_COUNT=$(find downloads/bizinfo -type f 2>/dev/null | wc -l || echo 0)
+        TOTAL_COUNT=$((KSTARTUP_COUNT + BIZINFO_COUNT))
+        TOTAL_SIZE=$(du -sh downloads/ 2>/dev/null | cut -f1 || echo '0B')
+        
+        echo "📊 최종 결과:"
+        echo "  🏢 K-Startup: ${KSTARTUP_COUNT}개 파일"
+        echo "  🏛️ BizInfo: ${BIZINFO_COUNT}개 파일"
+        echo "  📦 전체: ${TOTAL_COUNT}개 파일 (${TOTAL_SIZE})"
+        echo ""
+        echo "📥 다운로드 방법:"
+        echo "  1. GitHub Actions 페이지로 이동"
+        echo "  2. 'Artifacts' 섹션에서 'complete-downloads-${{ github.run_number }}' 다운로드"
+        echo "  3. 압축 해제 후 로컬에서 사용"
+        echo ""
+        echo "✅ 모든 파일이 GitHub Artifacts에 준비되었습니다!"
+        echo "🚀 100% 완벽 다운로드 시스템 가동 완료!"

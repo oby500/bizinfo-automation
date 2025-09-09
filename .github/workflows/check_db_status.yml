@@ -6,8 +6,14 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
     
     steps:
+      - name: Display Korean Time
+        run: |
+          echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+      
       - uses: actions/checkout@v3
       
       - name: Setup Python

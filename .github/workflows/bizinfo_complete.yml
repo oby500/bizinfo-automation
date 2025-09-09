@@ -12,12 +12,18 @@ on:
         - daily    # 최근 7일 데이터만 (빠른 처리)
         - full     # 전체 데이터 처리 (완전 점검)
   schedule:
-    - cron: '0 8 * * 1-5'  # 평일 오후 5시 (KST)
+    # UTC 기준 (한국시간 -9시간)
+    # KST 16:00 = UTC 07:00
+    # KST 16:30 = UTC 07:30
+    - cron: '0 7 * * 1-5'   # 한국시간 월-금 오후 4시
+    - cron: '30 7 * * 1-5'  # 한국시간 월-금 오후 4시 30분
 
 jobs:
   collect:
     name: 기업마당 완전 자동 처리
     runs-on: ubuntu-latest
+    env:
+      TZ: 'Asia/Seoul'  # 한국 시간대 설정
     steps:
     - uses: actions/checkout@v3
     
@@ -34,6 +40,9 @@ jobs:
     - name: Determine Mode
       id: mode
       run: |
+        # 한국 시간 출력
+        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+        
         if [ "${{ github.event_name }}" = "schedule" ]; then
           echo "mode=daily" >> $GITHUB_OUTPUT
           echo "📅 스케줄 실행: daily 모드"
