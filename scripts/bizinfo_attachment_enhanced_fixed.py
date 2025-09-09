@@ -129,10 +129,9 @@ def process_bizinfo_record(record):
         attachments = extract_bizinfo_attachments(detail_url, pblanc_id, title)
         
         if attachments:
-            update_data = {'attachment_urls': attachments}
-            
+            # 첨부파일이 있는 경우 저장
             result = supabase.table('bizinfo_complete')\
-                .update(update_data)\
+                .update({'attachment_urls': attachments})\
                 .eq('pblanc_id', pblanc_id)\
                 .execute()
             
@@ -140,6 +139,19 @@ def process_bizinfo_record(record):
                 with lock:
                     progress['success'] += 1
                     progress['new_files'] += len(attachments)
+                print(f"  ✅ {len(attachments)}개 URL 수집 완료")
+                return True
+        else:
+            # 첨부파일이 없는 경우 빈 배열로 저장
+            result = supabase.table('bizinfo_complete')\
+                .update({'attachment_urls': []})\
+                .eq('pblanc_id', pblanc_id)\
+                .execute()
+            
+            if result.data:
+                with lock:
+                    progress['success'] += 1
+                print(f"  📝 첨부파일 없음 (빈 배열 저장)")
                 return True
         
         with lock:
@@ -154,7 +166,7 @@ def process_bizinfo_record(record):
 def main():
     """메인 실행"""
     print("="*70)
-    print("📎 BizInfo 첨부파일 수집 (정확한 시그니처 기반)")
+    print("📎 BizInfo 첨부파일 URL 수집 (URL만)")
     print("="*70)
     
     # 처리 제한 확인
@@ -187,25 +199,16 @@ def main():
     needs_processing = []
     
     for record in all_records.data:
-        # 첨부파일이 없거나 FILE 타입이 많은 경우
+        # 첨부파일 정보가 없는 경우만 처리 (NULL만 처리, 빈 배열은 이미 처리됨)
+        attachment_urls = record.get('attachment_urls')
         detail_url = record.get('detail_url') or record.get('dtl_url')
         
         if not detail_url:
             continue  # URL이 없으면 처리 불가
             
-        if not record.get('attachment_urls'):
+        # NULL인 경우만 처리 (빈 배열 []은 첨부파일 없음으로 이미 처리됨)
+        if attachment_urls is None:
             needs_processing.append(record)
-        else:
-            # FILE이나 잘못된 타입이 있는지 확인
-            has_issues = False
-            for att in record['attachment_urls']:
-                if isinstance(att, dict):
-                    if att.get('type') == 'FILE' or not att.get('file_extension'):
-                        has_issues = True
-                        break
-            
-            if has_issues:
-                needs_processing.append(record)
     
     # 제한 없이 전체 처리
     # if processing_limit > 0 and len(needs_processing) > processing_limit:
@@ -237,10 +240,15 @@ def main():
     
     # 결과 출력
     print("\n" + "="*70)
-    print("📊 처리 완료")
+    print("📊 BizInfo 첨부파일 수집 완료")
     print("="*70)
-    print(f"✅ 성공: {progress['success']}/{progress['total']}")
+    print(f"✅ 처리 완료: {progress['success']}/{progress['total']}")
     print(f"📎 수집된 URL: {progress['new_files']}개")
+    print(f"📝 첨부파일 없음: 빈 배열 []로 저장됨")
+    print("\n🔧 개선사항:")
+    print("  - NULL vs 빈 배열 명확히 구분")
+    print("  - 첨부파일 없는 경우 빈 배열 []로 저장")
+    print("  - 순수 다운로드 URL만 저장")
     print("="*70)
 
 if __name__ == "__main__":
