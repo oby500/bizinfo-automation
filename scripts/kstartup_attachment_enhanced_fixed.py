@@ -44,7 +44,7 @@ session.headers.update({
 })
 
 def extract_attachments_url_only(page_url):
-    """K-Startup 첨부파일 URL만 추출"""
+    """K-Startup 첨부파일 URL만 추출 - 이중 URL 패턴 지원"""
     all_attachments = []
     
     # pbanc_sn 추출
@@ -57,69 +57,94 @@ def extract_attachments_url_only(page_url):
     else:
         return []
     
-    try:
-        # 페이지 접속
-        response = session.get(page_url, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # 방법 1: 직접 링크 찾기
-        file_links = soup.find_all('a', href=re.compile(r'/afile/fileDownload/'))
-        for link in file_links:
-            href = link.get('href')
-            if href:
-                if href.startswith('/'):
-                    full_url = 'https://www.k-startup.go.kr' + href
-                else:
-                    full_url = href
+    # K-Startup URL 패턴: 접수 진행중 vs 마감됨
+    url_patterns = []
+    
+    # 원본 URL 먼저 시도
+    url_patterns.append(page_url)
+    
+    # 만약 ongoing URL이면 deadline URL도 시도
+    if 'bizpbanc-ongoing.do' in page_url:
+        deadline_url = page_url.replace('bizpbanc-ongoing.do', 'bizpbanc-deadline.do')
+        deadline_url = deadline_url.replace('pbancClssCd=PBC010', 'pbancClssCd=PBC020')
+        url_patterns.append(deadline_url)
+    
+    # 만약 deadline URL이면 ongoing URL도 시도
+    elif 'bizpbanc-deadline.do' in page_url:
+        ongoing_url = page_url.replace('bizpbanc-deadline.do', 'bizpbanc-ongoing.do')
+        ongoing_url = ongoing_url.replace('pbancClssCd=PBC020', 'pbancClssCd=PBC010')
+        url_patterns.append(ongoing_url)
+    
+    # 각 URL 패턴 시도
+    for attempt_url in url_patterns:
+        try:
+            # 페이지 접속
+            response = session.get(attempt_url, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # 방법 1: 직접 링크 찾기
+            file_links = soup.find_all('a', href=re.compile(r'/afile/fileDownload/'))
+            for link in file_links:
+                href = link.get('href')
+                if href:
+                    if href.startswith('/'):
+                        full_url = 'https://www.k-startup.go.kr' + href
+                    else:
+                        full_url = href
+                    
+                    # URL만 저장
+                    all_attachments.append({'url': full_url})
+            
+            # 방법 2: JavaScript onclick 파싱
+            onclick_links = soup.find_all('a', onclick=re.compile(r'fileDownBySn'))
+            for link in onclick_links:
+                onclick = link.get('onclick', '')
+                match = re.search(r"fileDownBySn\(\s*'(\d+)'\s*,\s*'(\d+)'\s*\)", onclick)
+                if match:
+                    file_sn = match.group(1)
+                    file_seq = match.group(2)
+                    download_url = f'https://www.k-startup.go.kr/afile/fileDownload/{pbanc_sn}/{file_sn}/{file_seq}'
+                    
+                    # URL만 저장
+                    all_attachments.append({'url': download_url})
+            
+            # 방법 3: 첨부파일 테이블 파싱
+            attachment_tables = soup.find_all('table', class_='table_view')
+            for table in attachment_tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    links = row.find_all('a')
+                    for link in links:
+                        href = link.get('href')
+                        if href and '/afile/fileDownload/' in href:
+                            if href.startswith('/'):
+                                full_url = 'https://www.k-startup.go.kr' + href
+                            else:
+                                full_url = href
+                            
+                            # URL만 저장
+                            all_attachments.append({'url': full_url})
+            
+            # 첨부파일을 찾았으면 더 이상 다른 URL 시도하지 않음
+            if all_attachments:
+                print(f"    첨부파일 발견: {attempt_url}")
+                break
                 
-                # URL만 저장
-                all_attachments.append({'url': full_url})
-        
-        # 방법 2: JavaScript onclick 파싱
-        onclick_links = soup.find_all('a', onclick=re.compile(r'fileDownBySn'))
-        for link in onclick_links:
-            onclick = link.get('onclick', '')
-            match = re.search(r"fileDownBySn\(\s*'(\d+)'\s*,\s*'(\d+)'\s*\)", onclick)
-            if match:
-                file_sn = match.group(1)
-                file_seq = match.group(2)
-                download_url = f'https://www.k-startup.go.kr/afile/fileDownload/{pbanc_sn}/{file_sn}/{file_seq}'
-                
-                # URL만 저장
-                all_attachments.append({'url': download_url})
-        
-        # 방법 3: 첨부파일 테이블 파싱
-        attachment_tables = soup.find_all('table', class_='table_view')
-        for table in attachment_tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                links = row.find_all('a')
-                for link in links:
-                    href = link.get('href')
-                    if href and '/afile/fileDownload/' in href:
-                        if href.startswith('/'):
-                            full_url = 'https://www.k-startup.go.kr' + href
-                        else:
-                            full_url = href
-                        
-                        # URL만 저장
-                        all_attachments.append({'url': full_url})
-        
-        # 중복 제거
-        seen_urls = set()
-        unique_attachments = []
-        for att in all_attachments:
-            if att['url'] not in seen_urls:
-                seen_urls.add(att['url'])
-                unique_attachments.append(att)
-        
-        return unique_attachments
-        
-    except Exception as e:
-        print(f"URL 추출 실패 {page_url}: {str(e)}")
-        return []
+        except Exception as e:
+            print(f"    URL 시도 실패 {attempt_url}: {str(e)}")
+            continue
+    
+    # 중복 제거
+    seen_urls = set()
+    unique_attachments = []
+    for att in all_attachments:
+        if att['url'] not in seen_urls:
+            seen_urls.add(att['url'])
+            unique_attachments.append(att)
+    
+    return unique_attachments
 
 def process_record(record):
     """레코드 처리 - URL만 수집"""
@@ -152,7 +177,7 @@ def process_record(record):
                 print(f"  ✅ {len(attachments)}개 URL 수집 완료")
                 return True
         else:
-            # 첨부파일이 없는 경우도 업데이트
+            # 첨부파일이 없는 경우 빈 배열로 저장
             result = supabase.table('kstartup_complete')\
                 .update({
                     'attachment_urls': []
@@ -163,7 +188,7 @@ def process_record(record):
             if result.data:
                 with lock:
                     progress['success'] += 1
-                print(f"  📝 첨부파일 없음")
+                print(f"  📝 첨부파일 없음 (빈 배열 저장)")
                 return True
         
         with lock:
@@ -195,17 +220,38 @@ def main():
             .execute()
         print(f"📌 Daily 모드: 최근 {processing_limit*2}개 중에서 처리 필요한 것만 선택")
     else:
-        # Full 모드: 전체
-        all_records = supabase.table('kstartup_complete')\
-            .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls')\
-            .execute()
-        print("📌 Full 모드: 전체 데이터 처리")
+        # Full 모드: 전체 - 1000개씩 나눠서 처리
+        all_records = {'data': []}
+        offset = 0
+        batch_size = 1000
+        
+        while True:
+            batch = supabase.table('kstartup_complete')\
+                .select('announcement_id, biz_pbanc_nm, detl_pg_url, attachment_urls')\
+                .range(offset, offset + batch_size - 1)\
+                .execute()
+            
+            if not batch.data:
+                break
+                
+            all_records['data'].extend(batch.data)
+            
+            if len(batch.data) < batch_size:
+                break
+                
+            offset += batch_size
+        
+        print(f"📌 Full 모드: 전체 데이터 {len(all_records['data'])}개 처리")
     
     needs_processing = []
     
-    for record in all_records.data:
-        # 첨부파일 정보가 없는 경우 재처리
-        if not record.get('attachment_urls'):
+    # all_records가 dict인지 확인
+    records_data = all_records['data'] if isinstance(all_records, dict) else all_records.data
+    
+    for record in records_data:
+        # 첨부파일 정보가 없는 경우 재처리 (NULL만 처리, 빈 배열은 이미 처리됨)
+        attachment_urls = record.get('attachment_urls')
+        if attachment_urls is None:
             needs_processing.append(record)
     
     # Daily 모드에서는 최대 N개만 처리
@@ -215,7 +261,7 @@ def main():
     
     progress['total'] = len(needs_processing)
     
-    print(f"✅ 검토 대상: {len(all_records.data)}개")
+    print(f"✅ 검토 대상: {len(records_data)}개")
     print(f"📎 처리 필요: {progress['total']}개")
     
     if progress['total'] == 0:
@@ -238,14 +284,16 @@ def main():
     
     # 결과 출력
     print("\n" + "="*70)
-    print("📊 처리 완료")
+    print("📊 K-Startup 첨부파일 수집 완료")
     print("="*70)
-    print(f"✅ 성공: {progress['success']}/{progress['total']}")
+    print(f"✅ 처리 완료: {progress['success']}/{progress['total']}")
     print(f"📎 수집된 URL: {progress['new_files']}개")
-    print("\n📝 변경사항:")
-    print("  - 파일명과 타입 정보 제거")
+    print(f"📝 첨부파일 없음: 빈 배열 []로 저장됨")
+    print("\n🔧 개선사항:")
+    print("  - 이중 URL 패턴 지원 (ongoing ↔ deadline 자동 변환)")
+    print("  - 접수 마감 후에도 첨부파일 수집 가능")
+    print("  - 첨부파일 없는 경우 빈 배열 []로 명확히 구분")
     print("  - 순수 다운로드 URL만 저장")
-    print("  - 파일명은 다운로드 시 HTTP 헤더에서 추출")
     print("="*70)
 
 if __name__ == "__main__":

@@ -1,177 +1,137 @@
 #!/usr/bin/env python3
 """
-첨부파일 수집 테스트 - 파일 타입 감지 확인
+첨부파일 URL 수집 테스트 스크립트
+K-Startup과 BizInfo 모두 테스트
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import os
-from dotenv import load_dotenv
-from supabase import create_client
-import json
+import time
+from datetime import datetime
 
-load_dotenv()
+# 환경변수 설정
+os.environ['SUPABASE_URL'] = 'https://csuziaogycciwgxxmahm.supabase.co'
+os.environ['SUPABASE_SERVICE_KEY'] = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXppYW9neWNjaXdneHhtYWhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzYxNTc4MCwiZXhwIjoyMDY5MTkxNzgwfQ.HnhM7zSLzi7lHVPd2IVQKIACDq_YA05mBMgZbSN1c9Q'
+os.environ['PROCESSING_LIMIT'] = '5'  # 테스트용으로 5개만
 
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY')
-supabase = create_client(url, key)
-
-def test_specific_announcement(announcement_id):
-    """특정 공고의 첨부파일 타입 확인"""
-    print(f"\n{'='*70}")
-    print(f"📋 공고 {announcement_id} 첨부파일 타입 확인")
-    print(f"{'='*70}")
-    
-    # 데이터베이스에서 해당 공고 조회
-    result = supabase.table('kstartup_complete')\
-        .select('announcement_id, pblanc_nm, attachment_urls, attachment_count')\
-        .eq('announcement_id', announcement_id)\
-        .execute()
-    
-    if not result.data:
-        print(f"❌ 공고 {announcement_id}를 찾을 수 없습니다.")
-        return
-    
-    record = result.data[0]
-    print(f"📌 공고명: {record.get('pblanc_nm', 'No Title')}")
-    print(f"📎 첨부파일 수: {record.get('attachment_count', 0)}개")
-    
-    # attachment_urls 파싱
-    attachment_urls = record.get('attachment_urls')
-    if not attachment_urls:
-        print("   첨부파일 없음")
-        return
+def test_kstartup_attachment():
+    """K-Startup 첨부파일 수집 테스트"""
+    print("\n" + "="*60)
+    print("K-Startup 첨부파일 URL 수집 테스트")
+    print("="*60)
     
     try:
-        if isinstance(attachment_urls, str):
-            attachments = json.loads(attachment_urls)
-        else:
-            attachments = attachment_urls
-    except:
-        print("   ⚠️ 첨부파일 정보 파싱 실패")
-        return
-    
-    # 파일 타입별 분류
-    type_counts = {}
-    file_list = {}
-    
-    for i, att in enumerate(attachments, 1):
-        file_type = att.get('type', 'UNKNOWN')
-        file_name = att.get('text', att.get('display_filename', '파일명 없음'))
-        file_ext = att.get('file_extension', '')
-        
-        # 타입별 카운트
-        type_counts[file_type] = type_counts.get(file_type, 0) + 1
-        
-        # 타입별 파일 리스트
-        if file_type not in file_list:
-            file_list[file_type] = []
-        file_list[file_type].append({
-            'name': file_name,
-            'ext': file_ext,
-            'url': att.get('url', '')[:80] + '...' if len(att.get('url', '')) > 80 else att.get('url', '')
-        })
-    
-    # 결과 출력
-    print(f"\n📊 파일 타입 분석:")
-    print(f"   전체: {len(attachments)}개")
-    for file_type, count in sorted(type_counts.items()):
-        print(f"   - {file_type}: {count}개")
-    
-    print(f"\n📂 파일 상세:")
-    for file_type, files in sorted(file_list.items()):
-        print(f"\n   [{file_type}] ({len(files)}개)")
-        for f in files[:3]:  # 각 타입별로 최대 3개만 출력
-            print(f"      • {f['name']}")
-            if f['ext']:
-                print(f"        확장자: .{f['ext']}")
-        if len(files) > 3:
-            print(f"      ... 외 {len(files)-3}개")
-    
-    # HWP/HWPX 파일 유무 확인
-    hwp_count = type_counts.get('HWP', 0) + type_counts.get('HWPX', 0)
-    if hwp_count > 0:
-        print(f"\n✅ 변환 대상 HWP 파일: {hwp_count}개")
-    else:
-        print(f"\n❌ 변환 대상 HWP 파일 없음 (처리 스킵)")
-    
-    return type_counts
+        # K-Startup 첨부파일 수집 스크립트 실행
+        from scripts.kstartup_attachment_enhanced_fixed import main as kstartup_main
+        print("\n📎 K-Startup 첨부파일 수집 시작...")
+        kstartup_main()
+        print("✅ K-Startup 첨부파일 수집 완료!")
+        return True
+    except Exception as e:
+        print(f"❌ K-Startup 첨부파일 수집 실패: {e}")
+        return False
 
-def test_recent_announcements():
-    """최근 공고들의 파일 타입 분포 확인"""
-    print(f"\n{'='*70}")
-    print(f"📊 최근 공고 첨부파일 타입 분포")
-    print(f"{'='*70}")
+def test_bizinfo_attachment():
+    """BizInfo 첨부파일 수집 테스트"""
+    print("\n" + "="*60)
+    print("BizInfo 첨부파일 URL 수집 테스트")
+    print("="*60)
     
-    # 최근 10개 공고 조회
-    result = supabase.table('kstartup_complete')\
-        .select('announcement_id, pblanc_nm, attachment_urls, attachment_count')\
-        .gt('attachment_count', 0)\
-        .order('created_at', desc=True)\
-        .limit(10)\
-        .execute()
+    try:
+        # BizInfo 첨부파일 수집 스크립트 실행
+        from scripts.bizinfo_attachment_enhanced_fixed import main as bizinfo_main
+        print("\n📎 BizInfo 첨부파일 수집 시작...")
+        bizinfo_main()
+        print("✅ BizInfo 첨부파일 수집 완료!")
+        return True
+    except Exception as e:
+        print(f"❌ BizInfo 첨부파일 수집 실패: {e}")
+        return False
+
+def verify_results():
+    """수집 결과 검증"""
+    print("\n" + "="*60)
+    print("수집 결과 검증")
+    print("="*60)
     
-    if not result.data:
-        print("첨부파일이 있는 공고가 없습니다.")
-        return
-    
-    total_counts = {}
-    total_files = 0
-    
-    for record in result.data:
-        announcement_id = record['announcement_id']
-        attachment_urls = record.get('attachment_urls')
+    try:
+        from supabase import create_client
+        url = os.environ.get('SUPABASE_URL')
+        key = os.environ.get('SUPABASE_SERVICE_KEY')
+        supabase = create_client(url, key)
         
-        if not attachment_urls:
-            continue
+        # K-Startup 결과 확인
+        kstartup_result = supabase.table('kstartup_complete')\
+            .select('announcement_id, biz_pbanc_nm, attachment_urls')\
+            .not_.is_('attachment_urls', 'null')\
+            .limit(5)\
+            .execute()
         
-        try:
-            if isinstance(attachment_urls, str):
-                attachments = json.loads(attachment_urls)
-            else:
-                attachments = attachment_urls
-        except:
-            continue
+        print(f"\n📊 K-Startup 첨부파일 수집 결과:")
+        print(f"  - 첨부파일이 있는 공고: {len(kstartup_result.data)}개")
         
-        # 타입별 카운트
-        for att in attachments:
-            file_type = att.get('type', 'UNKNOWN')
-            total_counts[file_type] = total_counts.get(file_type, 0) + 1
-            total_files += 1
-    
-    # 결과 출력
-    print(f"\n📈 전체 통계 (최근 10개 공고)")
-    print(f"   총 첨부파일: {total_files}개")
-    print(f"\n   타입별 분포:")
-    for file_type, count in sorted(total_counts.items(), key=lambda x: x[1], reverse=True):
-        percentage = (count / total_files * 100) if total_files > 0 else 0
-        print(f"   - {file_type}: {count}개 ({percentage:.1f}%)")
-    
-    # HWP 비율
-    hwp_total = total_counts.get('HWP', 0) + total_counts.get('HWPX', 0)
-    hwp_percentage = (hwp_total / total_files * 100) if total_files > 0 else 0
-    print(f"\n   📝 HWP/HWPX 파일: {hwp_total}개 ({hwp_percentage:.1f}%)")
+        for item in kstartup_result.data[:3]:
+            urls = item.get('attachment_urls', [])
+            print(f"  - {item['announcement_id']}: {len(urls)}개 URL")
+            if urls and len(urls) > 0:
+                print(f"    첫 번째 URL: {urls[0].get('url', '')[:60]}...")
+        
+        # BizInfo 결과 확인
+        bizinfo_result = supabase.table('bizinfo_complete')\
+            .select('pblanc_id, pblanc_nm, attachment_urls')\
+            .not_.is_('attachment_urls', 'null')\
+            .limit(5)\
+            .execute()
+        
+        print(f"\n📊 BizInfo 첨부파일 수집 결과:")
+        print(f"  - 첨부파일이 있는 공고: {len(bizinfo_result.data)}개")
+        
+        for item in bizinfo_result.data[:3]:
+            urls = item.get('attachment_urls', [])
+            print(f"  - {item['pblanc_id']}: {len(urls)}개 URL")
+            if urls and len(urls) > 0:
+                print(f"    첫 번째 URL: {urls[0].get('url', '')[:60]}...")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ 결과 검증 실패: {e}")
+        return False
 
 def main():
-    """메인 실행"""
-    print("="*70)
-    print("🔍 첨부파일 타입 감지 테스트")
-    print("="*70)
+    """메인 테스트 실행"""
+    print(f"\n🚀 첨부파일 URL 수집 테스트 시작")
+    print(f"시작 시간: {datetime.now()}")
     
-    # 특정 문제가 있던 공고 테스트
-    test_specific_announcement("KS_174648")
-    test_specific_announcement("KS_173508")
+    results = []
     
-    # 최근 공고들 통계
-    test_recent_announcements()
+    # K-Startup 테스트
+    results.append(("K-Startup", test_kstartup_attachment()))
+    time.sleep(2)
     
-    print("\n" + "="*70)
-    print("✅ 테스트 완료")
-    print("="*70)
+    # BizInfo 테스트
+    results.append(("BizInfo", test_bizinfo_attachment()))
+    time.sleep(2)
     
-    print("\n💡 다음 단계:")
-    print("1. 타입이 'FILE'로 표시된 항목들은 재수집이 필요합니다")
-    print("2. HWP/HWPX 타입만 PDF 변환 대상입니다")
-    print("3. PDF/IMAGE 타입은 변환 없이 스킵됩니다")
+    # 결과 검증
+    results.append(("검증", verify_results()))
+    
+    # 최종 결과
+    print("\n" + "="*60)
+    print("📊 최종 테스트 결과")
+    print("="*60)
+    
+    for name, success in results:
+        status = "✅ 성공" if success else "❌ 실패"
+        print(f"{name}: {status}")
+    
+    all_success = all(r[1] for r in results)
+    if all_success:
+        print("\n🎉 모든 테스트 성공!")
+    else:
+        print("\n⚠️ 일부 테스트 실패 - 확인 필요")
+    
+    print(f"\n종료 시간: {datetime.now()}")
 
 if __name__ == "__main__":
     main()
