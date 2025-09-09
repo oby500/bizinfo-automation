@@ -197,7 +197,7 @@ def process_announcement(ann):
                         'original_filename': att['name']
                     })
                 update_data['attachment_urls'] = attachment_urls
-                update_data['attachment_count'] = len(attachment_urls)
+                # attachment_count 제거 - attachment_urls 길이로 계산 가능
             
             # DB 업데이트
             result = supabase.table('kstartup_complete')\

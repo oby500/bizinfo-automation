@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
-BizInfo 첨부파일 수집 개선판 - 정확한 파일 타입 감지
-- K-Startup 방식 적용
-- 파일 시그니처로 100% 정확한 타입 감지
-- HWP/DOC 구분 개선
-- 15가지 파일 타입 지원
+BizInfo 첨부파일 URL 수집 - URL만 수집
+- 첨부파일 URL만 수집
+- 파일명과 타입 정보는 다운로드 시 HTTP 헤더에서 추출
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -20,8 +18,14 @@ import threading
 
 load_dotenv()
 
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY')
+# Supabase 설정 (SERVICE_KEY 우선 사용)
+url = os.environ.get('SUPABASE_URL', 'https://csuziaogycciwgxxmahm.supabase.co')
+key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+
+# 키가 없으면 하드코딩된 값 사용
+if not key:
+    key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXppYW9neWNjaXdneHhtYWhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzYxNTc4MCwiZXhwIjoyMDY5MTkxNzgwfQ.HnhM7zSLzi7lHVPd2IVQKIACDq_YA05mBMgZbSN1c9Q'
+
 supabase = create_client(url, key)
 
 lock = threading.Lock()
@@ -29,29 +33,9 @@ progress = {
     'success': 0, 
     'error': 0, 
     'total': 0, 
-    'new_files': 0,
-    'type_detected': 0,
-    'type_stats': {}
+    'new_files': 0
 }
 
-# 파일 타입 정보
-FILE_TYPE_INFO = {
-    'HWP': {'ext': 'hwp', 'mime': 'application/x-hwp'},
-    'HWPX': {'ext': 'hwpx', 'mime': 'application/x-hwpx'},
-    'PDF': {'ext': 'pdf', 'mime': 'application/pdf'},
-    'DOCX': {'ext': 'docx', 'mime': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
-    'DOC': {'ext': 'doc', 'mime': 'application/msword'},
-    'XLSX': {'ext': 'xlsx', 'mime': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
-    'XLS': {'ext': 'xls', 'mime': 'application/vnd.ms-excel'},
-    'PPTX': {'ext': 'pptx', 'mime': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'},
-    'PPT': {'ext': 'ppt', 'mime': 'application/vnd.ms-powerpoint'},
-    'ZIP': {'ext': 'zip', 'mime': 'application/zip'},
-    'JPG': {'ext': 'jpg', 'mime': 'image/jpeg'},
-    'PNG': {'ext': 'png', 'mime': 'image/png'},
-    'GIF': {'ext': 'gif', 'mime': 'image/gif'},
-    'TXT': {'ext': 'txt', 'mime': 'text/plain'},
-    'FILE': {'ext': 'bin', 'mime': 'application/octet-stream'}
-}
 
 session = requests.Session()
 session.headers.update({
@@ -61,138 +45,10 @@ session.headers.update({
     'Referer': 'https://www.bizinfo.go.kr/'
 })
 
-def get_file_type_by_signature(url):
-    """파일 시그니처로 정확한 타입 감지"""
-    try:
-        response = session.get(url, stream=True, timeout=10)
-        
-        # Content-Disposition에서 파일명 추출 시도 (인코딩 개선)
-        cd = response.headers.get('Content-Disposition', '')
-        filename_hint = None
-        if cd:
-            try:
-                if "filename*=UTF-8''" in cd:
-                    match = re.search(r"filename\*=UTF-8''([^;]+)", cd)
-                    if match:
-                        filename_hint = unquote(match.group(1))
-                elif 'filename=' in cd:
-                    match = re.search(r'filename="?([^";]+)"?', cd)
-                    if match:
-                        raw_filename = match.group(1)
-                        # 다양한 인코딩 시도
-                        try:
-                            filename_hint = raw_filename.encode('iso-8859-1').decode('utf-8')
-                        except:
-                            try:
-                                filename_hint = raw_filename.encode('iso-8859-1').decode('euc-kr')
-                            except:
-                                filename_hint = raw_filename
-            except:
-                filename_hint = None
-        
-        # 파일 내용 읽기 (10KB)
-        content = response.raw.read(10000)
-        response.close()
-        
-        file_type = 'FILE'
-        
-        # PDF
-        if content[:4] == b'%PDF':
-            file_type = 'PDF'
-        
-        # ZIP 기반 (Office 2007+, HWPX)
-        elif content[:2] == b'PK':
-            if b'hwpml' in content:
-                file_type = 'HWPX'
-            elif b'word/' in content:
-                file_type = 'DOCX'
-            elif b'xl/' in content or b'worksheet' in content:
-                file_type = 'XLSX'
-            elif b'ppt/' in content or b'presentation' in content:
-                file_type = 'PPTX'
-            else:
-                file_type = 'ZIP'
-        
-        # HWP 명확한 시그니처
-        elif b'HWP Document File' in content[:100]:
-            file_type = 'HWP'
-        
-        # OLE 컴파운드 파일 (MS Office 97-2003 또는 HWP 5.0)
-        elif content[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
-            # HWP 5.0 시그니처 확인
-            if b'HWP Document File' in content or b'HwpSummaryInformation' in content:
-                file_type = 'HWP'
-            # HWP 키워드가 있으면 HWP로 판단
-            elif b'Hwp' in content or b'HWP' in content:
-                if b'Microsoft' not in content[:2000]:
-                    file_type = 'HWP'
-                else:
-                    if b'Microsoft Word' in content or b'WordDocument' in content:
-                        file_type = 'DOC'
-                    elif b'Microsoft Excel' in content or b'Workbook' in content:
-                        file_type = 'XLS'
-                    elif b'Microsoft PowerPoint' in content or b'PowerPoint' in content:
-                        file_type = 'PPT'
-                    else:
-                        file_type = 'DOC'
-            # Microsoft 제품
-            elif b'Microsoft Word' in content or b'WordDocument' in content:
-                file_type = 'DOC'
-            elif b'Microsoft Excel' in content or b'Workbook' in content:
-                file_type = 'XLS'
-            elif b'Microsoft PowerPoint' in content or b'PowerPoint' in content:
-                file_type = 'PPT'
-            else:
-                # 파일명 힌트 사용
-                if filename_hint:
-                    ext = filename_hint.split('.')[-1].lower() if '.' in filename_hint else ''
-                    if ext == 'hwp':
-                        file_type = 'HWP'
-                    elif ext == 'doc':
-                        file_type = 'DOC'
-                    elif ext == 'xls':
-                        file_type = 'XLS'
-                    elif ext == 'ppt':
-                        file_type = 'PPT'
-                else:
-                    file_type = 'DOC'  # 기본값
-        
-        # 이미지
-        elif content[:3] == b'\xff\xd8\xff':
-            file_type = 'JPG'
-        elif content[:8] == b'\x89PNG\r\n\x1a\n':
-            file_type = 'PNG'
-        elif content[:6] in [b'GIF87a', b'GIF89a']:
-            file_type = 'GIF'
-        
-        # 텍스트 파일
-        else:
-            try:
-                decoded = content.decode('utf-8')
-                if sum(1 for c in decoded if c.isprintable() or c.isspace()) / len(decoded) > 0.9:
-                    file_type = 'TXT'
-            except:
-                pass
-        
-        return file_type, filename_hint
-        
-    except Exception as e:
-        return 'FILE', None
-
-def make_safe_title(title):
-    """공고명을 안전한 파일명으로 변환"""
-    if not title:
-        return ""
-    # 특수문자 제거, 공백을 언더스코어로
-    safe = re.sub(r'[^\w\s가-힣-]', '', title)
-    safe = re.sub(r'\s+', '_', safe)
-    # 길이 제한
-    return safe[:30] if len(safe) > 30 else safe
 
 def extract_bizinfo_attachments(detail_url, pblanc_id, announcement_title=None):
     """BizInfo 첨부파일 추출"""
     all_attachments = []
-    safe_title = make_safe_title(announcement_title) if announcement_title else ""
     
     try:
         response = session.get(detail_url, timeout=15)
@@ -236,53 +92,12 @@ def extract_bizinfo_attachments(detail_url, pblanc_id, announcement_title=None):
             if not full_url:
                 continue
             
-            # 파일 타입 감지
-            file_type, server_filename = get_file_type_by_signature(full_url)
-            type_info = FILE_TYPE_INFO.get(file_type, FILE_TYPE_INFO['FILE'])
-            
-            # 파일명 결정
-            if server_filename:
-                original_filename = server_filename
-            elif text and text not in ['다운로드', '첨부파일', '파일다운로드']:
-                original_filename = text
-            else:
-                original_filename = f'첨부파일_{idx}'
-            
-            # 확장자 처리
-            if not re.search(r'\.[a-zA-Z0-9]+$', original_filename):
-                display_filename = f"{original_filename}.{type_info['ext']}"
-            else:
-                # 잘못된 확장자면 교정
-                base_name = re.sub(r'\.[^.]+$', '', original_filename)
-                display_filename = f"{base_name}.{type_info['ext']}"
-            
-            # safe_filename
-            if safe_title:
-                safe_filename = f"{safe_title}_{idx:02d}"
-            else:
-                safe_filename = f"BIZ_{pblanc_id}_{idx:02d}"
-            
+            # URL만 저장 (파일명과 타입 정보는 다운로드 시 HTTP 헤더에서 추출)
             attachment = {
-                'url': full_url,
-                'type': file_type,
-                'text': text or f'첨부파일_{idx}',
-                'params': {},
-                'safe_filename': safe_filename,
-                'file_extension': type_info['ext'],
-                'display_filename': display_filename,
-                'original_filename': original_filename
+                'url': full_url
             }
             
-            # MIME 타입 추가
-            if file_type != 'FILE':
-                attachment['mime_type'] = type_info['mime']
-            
             attachments.append(attachment)
-            
-            with lock:
-                progress['type_stats'][file_type] = progress['type_stats'].get(file_type, 0) + 1
-                if file_type != 'FILE':
-                    progress['type_detected'] += 1
         
         all_attachments.extend(attachments)
         
@@ -345,21 +160,29 @@ def main():
     # 처리 제한 확인
     processing_limit = int(os.environ.get('PROCESSING_LIMIT', '0'))
     
-    # 처리 대상 조회
-    if processing_limit > 0:
-        # 제한 모드: 최근 N개만
-        all_records = supabase.table('bizinfo_complete')\
+    # 처리 대상 조회 - 항상 전체 처리 (페이지네이션)
+    all_data = []
+    page_size = 1000
+    offset = 0
+    
+    while True:
+        batch = supabase.table('bizinfo_complete')\
             .select('pblanc_id, pblanc_nm, bsns_title, detail_url, dtl_url, attachment_urls')\
-            .order('created_at', desc=True)\
-            .limit(processing_limit * 2)\
+            .range(offset, offset + page_size - 1)\
             .execute()
-        print(f"📌 제한 모드: 최근 {processing_limit*2}개 중에서 처리 필요한 것만 선택")
-    else:
-        # Full 모드: 전체
-        all_records = supabase.table('bizinfo_complete')\
-            .select('pblanc_id, pblanc_nm, bsns_title, detail_url, dtl_url, attachment_urls')\
-            .execute()
-        print("📌 Full 모드: 전체 데이터 처리")
+        
+        if not batch.data:
+            break
+            
+        all_data.extend(batch.data)
+        print(f"  로딩: {len(all_data)}개...")
+        
+        if len(batch.data) < page_size:
+            break
+        offset += page_size
+    
+    all_records = type('obj', (object,), {'data': all_data})()
+    print(f"📌 Full 모드: 전체 데이터 처리 ({len(all_records.data)}개)")
     
     needs_processing = []
     
@@ -384,10 +207,10 @@ def main():
             if has_issues:
                 needs_processing.append(record)
     
-    # 제한 모드에서는 최대 N개만 처리
-    if processing_limit > 0 and len(needs_processing) > processing_limit:
-        needs_processing = needs_processing[:processing_limit]
-        print(f"📌 제한 모드: 최대 {processing_limit}개만 처리")
+    # 제한 없이 전체 처리
+    # if processing_limit > 0 and len(needs_processing) > processing_limit:
+    #     needs_processing = needs_processing[:processing_limit]
+    #     print(f"📌 제한 모드: 최대 {processing_limit}개만 처리")
     
     progress['total'] = len(needs_processing)
     
@@ -417,15 +240,7 @@ def main():
     print("📊 처리 완료")
     print("="*70)
     print(f"✅ 성공: {progress['success']}/{progress['total']}")
-    print(f"📎 수집된 첨부파일: {progress['new_files']}개")
-    print(f"🎯 타입 감지: {progress['type_detected']}개")
-    
-    if progress['type_stats']:
-        print(f"\n📊 파일 타입 분포:")
-        for file_type, count in sorted(progress['type_stats'].items(), key=lambda x: x[1], reverse=True)[:10]:
-            percentage = count * 100 / progress['new_files'] if progress['new_files'] > 0 else 0
-            print(f"   {file_type}: {count}개 ({percentage:.1f}%)")
-    
+    print(f"📎 수집된 URL: {progress['new_files']}개")
     print("="*70)
 
 if __name__ == "__main__":
