@@ -27,8 +27,13 @@ import re
 load_dotenv()
 
 # Supabase 설정
-url = os.environ.get('SUPABASE_URL')
-key = os.environ.get('SUPABASE_KEY')
+url = os.environ.get('SUPABASE_URL', 'https://csuziaogycciwgxxmahm.supabase.co')
+key = os.environ.get('SUPABASE_SERVICE_KEY') or os.environ.get('SUPABASE_KEY')
+
+# 키가 없으면 하드코딩된 값 사용
+if not key:
+    key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXppYW9neWNjaXdneHhtYWhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzYxNTc4MCwiZXhwIjoyMDY5MTkxNzgwfQ.HnhM7zSLzi7lHVPd2IVQKIACDq_YA05mBMgZbSN1c9Q'
+
 supabase = create_client(url, key)
 
 # 수집 모드
@@ -119,8 +124,8 @@ def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져
     try:
         params = {
             'serviceKey': unquote(SERVICE_KEY),
-            'pageNo': page_no,
-            'numOfRows': num_of_rows
+            'page': page_no,  # pageNo → page로 변경 (구글시트와 동일)
+            'perPage': num_of_rows  # numOfRows → perPage로 변경
         }
         
         response = requests.get(API_URL, params=params, timeout=30)
@@ -268,12 +273,11 @@ def main():
                 if item['announcement_id'] not in existing_ids and item.get('detl_pg_url'):
                     attachments = fetch_attachments_from_detail_page(item['detl_pg_url'])
                     item['attachment_urls'] = attachments
-                    item['attachment_count'] = len(attachments)
+                    # attachment_count 제거 - attachment_urls 길이로 계산 가능
                     if attachments:
                         attach_count += 1
                 else:
                     item['attachment_urls'] = []
-                    item['attachment_count'] = 0
                 
                 if item['announcement_id'] in existing_ids:
                     # 기존 데이터 - 중복 카운트
@@ -290,13 +294,12 @@ def main():
                         break
                     
                     # 기존 데이터 업데이트 (첨부파일이 없던 경우에만)
-                    if item.get('attachment_count', 0) > 0:
-                        existing_attach = supabase.table('kstartup_complete').select('attachment_count').eq('announcement_id', item['announcement_id']).execute()
-                        if existing_attach.data and existing_attach.data[0].get('attachment_count', 0) == 0:
+                    if len(item.get('attachment_urls', [])) > 0:
+                        existing_attach = supabase.table('kstartup_complete').select('attachment_urls').eq('announcement_id', item['announcement_id']).execute()
+                        if existing_attach.data and len(existing_attach.data[0].get('attachment_urls', [])) == 0:
                             # 기존에 첨부파일이 없었으면 업데이트
                             result = supabase.table('kstartup_complete').update({
-                                'attachment_urls': item['attachment_urls'],
-                                'attachment_count': item['attachment_count']
+                                'attachment_urls': item['attachment_urls']
                             }).eq('announcement_id', item['announcement_id']).execute()
                             
                             if result.data:
