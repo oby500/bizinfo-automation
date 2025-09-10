@@ -52,17 +52,17 @@ def test_with_real_data():
     supabase = create_client(url, key)
     
     # 테스트할 공고 가져오기 (attachment_urls는 있지만 files가 없는 것)
-    response = supabase.table('kstartup_announcements').select(
-        'id, pbln_pblancnm, attachment_urls'
-    ).not_.is_('attachment_urls', 'null').is_('files', 'null').limit(1).execute()
+    response = supabase.table('kstartup_complete').select(
+        'announcement_id, biz_pbanc_nm, attachment_urls'
+    ).not_.is_('attachment_urls', 'null').limit(1).execute()  # files 컬럼이 없으므로 제거
     
     if response.data and len(response.data) > 0:
         item = response.data[0]
         
         test_announcement = {
             'source': 'kstartup',
-            'id': item['id'],
-            'title': item['pbln_pblancnm'],
+            'id': item['announcement_id'],
+            'title': item['biz_pbanc_nm'],
             'urls': item['attachment_urls']
         }
         
@@ -74,7 +74,7 @@ def test_with_real_data():
         manager = PipelineManager()
         manager.process_announcement(test_announcement)
         
-        print(f"\n결과 파일: pipeline_results/{item['id']}_*.json")
+        print(f"\n결과 파일: pipeline_results/{item['announcement_id']}_*.json")
     else:
         print("테스트할 공고를 찾을 수 없습니다.")
         print("attachment_urls는 있지만 files가 없는 공고가 없습니다.")

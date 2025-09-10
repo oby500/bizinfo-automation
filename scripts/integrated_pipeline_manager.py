@@ -23,13 +23,58 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from supabase import create_client
 from dotenv import load_dotenv
 
-# Step 모듈 임포트
-from kstartup_attachment_enhanced_fixed import main as step1_kstartup
-from bizinfo_attachment_enhanced_fixed import main as step1_bizinfo
-from step2_convert_hwp_v3 import process_hwp_files as step2_convert
-from step3_extract_pdf_v7 import process_pdfs as step3_extract
-from step4_summarize_v2 import process_texts as step4_summarize
-# Step 5는 나중에 추가
+# 로깅 설정 먼저
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Step 모듈 - 실제 구현으로 교체 필요
+def step1_kstartup(announcement_id, urls):
+    """K-Startup 첨부파일 다운로드 (임시 더미 함수)"""
+    logger.info(f"K-Startup 다운로드 함수 호출: {announcement_id}")
+    # 실제 구현 필요
+    # from scripts.kstartup_attachment_enhanced_fixed import KstartupCollector
+    # collector = KstartupCollector()
+    # return collector.download_files(announcement_id, urls)
+    return []  # 임시로 빈 리스트 반환
+
+def step1_bizinfo(announcement_id, urls):
+    """BizInfo 첨부파일 다운로드 (임시 더미 함수)"""
+    logger.info(f"BizInfo 다운로드 함수 호출: {announcement_id}")
+    # 실제 구현 필요
+    # from scripts.bizinfo_attachment_enhanced_fixed import BizinfoCollector
+    # collector = BizinfoCollector()
+    # return collector.download_files(announcement_id, urls)
+    return []  # 임시로 빈 리스트 반환
+
+def step2_convert(hwp_files):
+    """HWP → PDF 변환 (임시 더미 함수)"""
+    logger.info(f"HWP 변환 함수 호출: {len(hwp_files)}개 파일")
+    # 실제 구현 필요
+    # from scripts.step2_convert_hwp_v3 import HWPConverter
+    # converter = HWPConverter()
+    # return converter.process_files(hwp_files)
+    return []  # 임시로 빈 리스트 반환
+
+def step3_extract(pdf_files):
+    """PDF 텍스트 추출 (임시 더미 함수)"""
+    logger.info(f"PDF 추출 함수 호출: {len(pdf_files)}개 파일")
+    # 실제 구현 필요
+    # from scripts.step3_extract_pdf_v7 import PDFExtractor
+    # extractor = PDFExtractor()
+    # return extractor.process_files(pdf_files)
+    return [], {}  # 텍스트 파일 리스트와 메타데이터 딕셔너리 반환
+
+def step4_summarize(text_files, metadata):
+    """AI 요약 생성 (임시 더미 함수)"""
+    logger.info(f"요약 생성 함수 호출: {len(text_files)}개 파일")
+    # 실제 구현 필요
+    # from scripts.step4_summarize_v2 import DocumentSummarizer
+    # summarizer = DocumentSummarizer()
+    # return summarizer.generate_summary(text_files, metadata)
+    return "요약 테스트", {"test": "metadata"}  # 요약과 메타데이터 반환
 
 # 환경 변수 로드
 load_dotenv()
@@ -37,16 +82,7 @@ url = os.environ.get('SUPABASE_URL')
 key = os.environ.get('SUPABASE_SERVICE_KEY')
 supabase = create_client(url, key)
 
-# 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/pipeline_manager.log', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# 로깅은 위에서 이미 설정됨
 
 # 파이프라인 결과 저장 경로
 PIPELINE_RESULTS_DIR = Path('pipeline_results')
@@ -64,17 +100,17 @@ class PipelineManager:
         """Supabase에서 새로운 URL 가져오기"""
         try:
             # 아직 처리되지 않은 URL 조회
-            # attachment_urls가 있지만 files가 없는 레코드
-            response = supabase.table('kstartup_announcements').select(
-                'id, pbln_pblancnm, attachment_urls'
-            ).not_.is_('attachment_urls', 'null').is_('files', 'null').limit(10).execute()
+            # attachment_urls가 있는 레코드 (files 컬럼이 없으므로)
+            response = supabase.table('kstartup_complete').select(
+                'announcement_id, biz_pbanc_nm, attachment_urls'
+            ).not_.is_('attachment_urls', 'null').limit(10).execute()
             
             kstartup_urls = response.data if response.data else []
             
             # BizInfo도 확인
-            response = supabase.table('bizinfo_announcements').select(
-                'id, pbln_sj, attachment_urls'
-            ).not_.is_('attachment_urls', 'null').is_('files', 'null').limit(10).execute()
+            response = supabase.table('bizinfo_complete').select(
+                'pblanc_id, pblanc_nm, attachment_urls'
+            ).not_.is_('attachment_urls', 'null').limit(10).execute()
             
             bizinfo_urls = response.data if response.data else []
             
@@ -84,16 +120,16 @@ class PipelineManager:
             for item in kstartup_urls:
                 all_urls.append({
                     'source': 'kstartup',
-                    'id': item['id'],
-                    'title': item['pbln_pblancnm'],
+                    'id': item['announcement_id'],
+                    'title': item['biz_pbanc_nm'],
                     'urls': item['attachment_urls']
                 })
                 
             for item in bizinfo_urls:
                 all_urls.append({
                     'source': 'bizinfo',
-                    'id': item['id'],
-                    'title': item['pbln_sj'],
+                    'id': item['pblanc_id'],
+                    'title': item['pblanc_nm'],
                     'urls': item['attachment_urls']
                 })
                 
@@ -325,7 +361,7 @@ class PipelineManager:
     def update_db_status(self, announcement_id: str, source: str, status: str, error: str = None):
         """DB 상태 업데이트"""
         try:
-            table_name = f"{source}_announcements"
+            table_name = f"{source}_complete"
             update_data = {
                 'processing_status': status,
                 'last_updated': datetime.now().isoformat()
@@ -334,7 +370,7 @@ class PipelineManager:
             if error:
                 update_data['processing_error'] = error
             
-            response = supabase.table(table_name).update(update_data).eq('id', announcement_id).execute()
+            response = supabase.table(table_name).update(update_data).eq('announcement_id', announcement_id).execute()
             
             if response.data:
                 logger.info(f"DB 상태 업데이트: {announcement_id} → {status}")
@@ -347,10 +383,10 @@ class PipelineManager:
     def update_db_files(self, announcement_id: str, source: str, files: List[str], step: int):
         """DB 파일 목록 업데이트"""
         try:
-            table_name = f"{source}_announcements"
+            table_name = f"{source}_complete"
             
             # 기존 파일 정보 가져오기
-            response = supabase.table(table_name).select('files').eq('id', announcement_id).single().execute()
+            response = supabase.table(table_name).select('files').eq('announcement_id', announcement_id).single().execute()
             existing_files = response.data.get('files', {}) if response.data else {}
             
             # Step별 파일 정보 업데이트
@@ -371,7 +407,7 @@ class PipelineManager:
                 f'step{step}_completed': datetime.now().isoformat()
             }
             
-            response = supabase.table(table_name).update(update_data).eq('id', announcement_id).execute()
+            response = supabase.table(table_name).update(update_data).eq('announcement_id', announcement_id).execute()
             
             if response.data:
                 logger.info(f"DB 파일 정보 업데이트: {announcement_id} Step {step}")
@@ -384,7 +420,7 @@ class PipelineManager:
     def update_db_summary(self, announcement_id: str, source: str, summary: str, metadata: Dict):
         """DB 요약 정보 업데이트"""
         try:
-            table_name = f"{source}_announcements"
+            table_name = f"{source}_complete"
             
             update_data = {
                 'ai_summary': summary,
@@ -392,7 +428,7 @@ class PipelineManager:
                 'summary_created_at': datetime.now().isoformat()
             }
             
-            response = supabase.table(table_name).update(update_data).eq('id', announcement_id).execute()
+            response = supabase.table(table_name).update(update_data).eq('announcement_id', announcement_id).execute()
             
             if response.data:
                 logger.info(f"DB 요약 정보 업데이트: {announcement_id}")
