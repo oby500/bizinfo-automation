@@ -1,0 +1,13 @@
+{
+  "timestamp": "2025-09-10T09:10:59.365403",
+  "total_files": 5644,
+  "total_size_mb": 2693.870000000005,
+  "average_size_mb": 0.47729801559177887,
+  "median_size_mb": 0.13,
+  "normal_average_mb": 0.15956758941200241,
+  "outliers_count": 695,
+  "normal_range": {
+    "min": 0,
+    "max": 0.605
+  }
+}
