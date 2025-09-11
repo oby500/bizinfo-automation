@@ -8,6 +8,10 @@ import os
 import time
 from datetime import datetime, timedelta
 import json
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 from urllib.parse import parse_qs, urlparse
 
 def calculate_d_day(end_date_str):
@@ -68,9 +72,14 @@ def create_basic_summary(row):
 def main():
     print(f"[{datetime.now()}] 기업마당 자동 수집 시작")
     
-    # Supabase 연결
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
+    # Supabase 연결 (SERVICE_KEY 우선 사용)
+    url = os.environ.get("SUPABASE_URL", 'https://csuziaogycciwgxxmahm.supabase.co')
+    key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
+    
+    # 키가 없으면 하드코딩된 값 사용
+    if not key:
+        key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdXppYW9neWNjaXdneHhtYWhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzYxNTc4MCwiZXhwIjoyMDY5MTkxNzgwfQ.HnhM7zSLzi7lHVPd2IVQKIACDq_YA05mBMgZbSN1c9Q'
+    
     supabase: Client = create_client(url, key)
     
     # Selenium 설정 (GitHub Actions용)
@@ -167,7 +176,7 @@ def main():
                 if pblanc_id in existing_ids:
                     duplicate_count += 1
                     if duplicate_count <= 10:  # 처음 10개만 출력
-                        print(f"  [{idx+1}/{len(df)}] ⏭️ 중복: {row.get('공고명', '')[:30]}...")
+                        print(f"  [{idx+1}/{len(df)}] [중복] {row.get('공고명', '')[:30]}...")
                     continue
                 
                 # 신청기간 처리
@@ -203,10 +212,10 @@ def main():
                 }
                 
                 new_records.append(record)
-                print(f"  [{idx+1}/{len(df)}] ✅ 신규: {record['pblanc_nm'][:30]}...")
+                print(f"  [{idx+1}/{len(df)}] [신규] {record['pblanc_nm'][:30]}...")
                 
             except Exception as e:
-                print(f"  [{idx+1}/{len(df)}] ❌ 오류: {e}")
+                print(f"  [{idx+1}/{len(df)}] [오류] {e}")
                 continue
         
         # 7. 배치 삽입
@@ -224,12 +233,12 @@ def main():
                         print(f"  저장 오류: {e}")
         
         print(f"\n=== 수집 완료 ===")
-        print(f"✅ 신규 저장: {success_count}개")
-        print(f"⏭️ 중복 제외: {duplicate_count}개")
-        print(f"📊 전체 처리: {len(df)}개")
+        print(f"신규 저장: {success_count}개")
+        print(f"중복 제외: {duplicate_count}개")
+        print(f"전체 처리: {len(df)}개")
         
     except Exception as e:
-        print(f"❌ 오류: {e}")
+        print(f"오류: {e}")
         raise
         
     finally:
