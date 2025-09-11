@@ -65,9 +65,13 @@ def extract_bizinfo_attachments(detail_url, pblanc_id, announcement_title=None):
         if not file_links:
             file_links = soup.find_all('a', onclick=re.compile(r'fnFileDown'))
         
-        # 3. 일반 파일 다운로드 링크 (href="/jsp/down.jsp" 등)
+        # 3. fileLoad, fileBlank 패턴 (새로운 패턴)
         if not file_links:
-            file_links = soup.find_all('a', href=re.compile(r'(down\.jsp|download|file)'))
+            file_links = soup.find_all('a', onclick=re.compile(r'(fileLoad|fileBlank)'))
+        
+        # 4. 일반 파일 다운로드 링크 (href="/jsp/down.jsp" 등)
+        if not file_links:
+            file_links = soup.find_all('a', href=re.compile(r'(down\.jsp|download|file|getImageFile)'))
         
         attachments = []
         
@@ -82,12 +86,23 @@ def extract_bizinfo_attachments(detail_url, pblanc_id, announcement_title=None):
                 full_url = urljoin('https://www.bizinfo.go.kr', href)
             elif href and href.startswith('http'):
                 full_url = href
-            elif onclick and 'fnFileDown' in onclick:
+            elif onclick:
                 # onclick에서 파일 정보 추출
-                match = re.search(r"fnFileDown\('([^']+)'", onclick)
-                if match:
-                    file_param = match.group(1)
-                    full_url = f"https://www.bizinfo.go.kr/jsp/down.jsp?file={file_param}"
+                if 'fnFileDown' in onclick:
+                    match = re.search(r"fnFileDown\('([^']+)'", onclick)
+                    if match:
+                        file_param = match.group(1)
+                        full_url = f"https://www.bizinfo.go.kr/jsp/down.jsp?file={file_param}"
+                elif 'fileLoad' in onclick or 'fileBlank' in onclick:
+                    # fileLoad('/webapp/upload/bizinfo/file/2025/09' + '/' + '202509101035440192.pdf', ...
+                    match = re.search(r"(fileLoad|fileBlank)\(([^)]+)\)", onclick)
+                    if match:
+                        params = match.group(2)
+                        # 경로 조합 - 첫 3개 문자열 조합
+                        path_parts = re.findall(r"'([^']+)'", params)
+                        if path_parts:
+                            file_path = ''.join(path_parts[:3] if len(path_parts) >= 3 else path_parts)
+                            full_url = f"https://www.bizinfo.go.kr{file_path}"
             
             if not full_url:
                 continue
