@@ -249,9 +249,10 @@ def main():
     records_data = all_records['data'] if isinstance(all_records, dict) else all_records.data
     
     for record in records_data:
-        # 첨부파일 정보가 없는 경우 재처리 (NULL만 처리, 빈 배열은 이미 처리됨)
+        # 첨부파일 정보가 없거나 빈 배열인 경우 항상 재처리
+        # 빈 배열도 실제로 첨부파일이 있을 수 있으므로 항상 재확인
         attachment_urls = record.get('attachment_urls')
-        if attachment_urls is None:
+        if attachment_urls is None or attachment_urls == []:
             needs_processing.append(record)
     
     # Daily 모드에서는 최대 N개만 처리

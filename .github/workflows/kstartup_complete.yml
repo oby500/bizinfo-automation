@@ -128,20 +128,30 @@ jobs:
         fi
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: K-Startup 첨부파일 URL 수집 (BizInfo 방식)
+    # Step 4: K-Startup 첨부파일 URL 수집 (빈 배열도 재처리)
     - name: Step 4 - K-Startup Attachment URL Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         if [ "${{ steps.mode.outputs.mode }}" = "daily" ]; then
-          echo "📎 Step 4: 최근 50개 첨부파일 URL 수집 (Daily 모드)..."
-          export PROCESSING_LIMIT=50
+          echo "📎 Step 4: 최근 100개 첨부파일 URL 수집 (Daily 모드)..."
+          echo "🔄 빈 배열도 재처리합니다."
+          export PROCESSING_LIMIT=100
         else
           echo "📎 Step 4: 전체 첨부파일 URL 수집 (Full 모드)..."
           export PROCESSING_LIMIT=0
         fi
-        python scripts/kstartup_attachment_urls_only.py || echo "첨부파일 수집 실패 - 건너뛰기"
+        python scripts/kstartup_attachment_enhanced_fixed.py || echo "첨부파일 수집 실패 - 건너뛰기"
+    
+    # Step 5: 잘못된 형식의 URL 정리 (URL만 남기기)
+    - name: Step 5 - Clean Attachment URLs
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      run: |
+        echo "🧪 Step 5: 첨부파일 URL 정리 (URL만 남기기)..."
+        python scripts/clean_all_urls.py || echo "URL 정리 실패 - 건너뛰기"
           
     - name: Generate Final Report
       if: always()

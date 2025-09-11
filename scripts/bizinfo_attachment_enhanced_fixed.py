@@ -184,8 +184,8 @@ def main():
     print("📎 BizInfo 첨부파일 URL 수집 (URL만)")
     print("="*70)
     
-    # 처리 제한 확인
-    processing_limit = int(os.environ.get('PROCESSING_LIMIT', '0'))
+    # 처리 제한 확인 - 기본값 200개로 증가 (100% 수집 보장)
+    processing_limit = int(os.environ.get('PROCESSING_LIMIT', '200'))
     
     # 처리 대상 조회 - 항상 전체 처리 (페이지네이션)
     all_data = []
@@ -222,13 +222,18 @@ def main():
             continue  # URL이 없으면 처리 불가
             
         # NULL이거나 빈 배열인 경우 처리 (최근 데이터 첨부파일 재수집)
-        if attachment_urls is None or attachment_urls == []:
+        # 또는 잘못된 형식의 attachment_urls도 재처리 (getImageFile, DOC, UNKNOWN 타입)
+        if attachment_urls is None or attachment_urls == [] or \
+           (isinstance(attachment_urls, list) and len(attachment_urls) > 0 and \
+            any(att.get('type') in ['getImageFile', 'DOC', 'UNKNOWN', 'HTML'] for att in attachment_urls if isinstance(att, dict))):
             needs_processing.append(record)
     
-    # 제한 없이 전체 처리
-    # if processing_limit > 0 and len(needs_processing) > processing_limit:
-    #     needs_processing = needs_processing[:processing_limit]
-    #     print(f"📌 제한 모드: 최대 {processing_limit}개만 처리")
+    # 처리 제한 적용 (기본 200개)
+    if processing_limit > 0 and len(needs_processing) > processing_limit:
+        # 최신 데이터부터 처리하도록 정렬
+        needs_processing.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        needs_processing = needs_processing[:processing_limit]
+        print(f"📌 제한 모드: 최대 {processing_limit}개만 처리 (최신 데이터 우선)")
     
     progress['total'] = len(needs_processing)
     
@@ -241,8 +246,8 @@ def main():
     
     print(f"🔥 {progress['total']}개 처리 시작 (15 workers)...\n")
     
-    # 병렬 처리 (BizInfo는 K-Startup보다 느려서 worker 수 줄임)
-    with ThreadPoolExecutor(max_workers=15) as executor:
+    # 병렬 처리 (안정성과 속도 균형을 위해 worker 수 최적화)
+    with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {executor.submit(process_bizinfo_record, record): record for record in needs_processing}
         
         for i, future in enumerate(as_completed(futures), 1):
