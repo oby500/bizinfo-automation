@@ -206,8 +206,8 @@ def main():
         if not detail_url:
             continue  # URL이 없으면 처리 불가
             
-        # NULL인 경우만 처리 (빈 배열 []은 첨부파일 없음으로 이미 처리됨)
-        if attachment_urls is None:
+        # NULL이거나 빈 배열인 경우 처리 (최근 데이터 첨부파일 재수집)
+        if attachment_urls is None or attachment_urls == []:
             needs_processing.append(record)
     
     # 제한 없이 전체 처리

@@ -128,17 +128,20 @@ jobs:
         fi
         python scripts/kstartup_parallel_parser.py || echo "파싱 스크립트 없음 - 건너뛰기"
           
-    # Step 4: K-Startup 첨부파일 처리 (모드별 처리)
-    - name: Step 4 - K-Startup Attachment Processing (Enhanced)
+    # Step 4: K-Startup 첨부파일 URL 수집 (BizInfo 방식)
+    - name: Step 4 - K-Startup Attachment URL Collection
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         if [ "${{ steps.mode.outputs.mode }}" = "daily" ]; then
-          echo "📎 Step 4: 최근 50개 첨부파일 처리 (Daily 모드)..."
+          echo "📎 Step 4: 최근 50개 첨부파일 URL 수집 (Daily 모드)..."
           export PROCESSING_LIMIT=50
         else
-          echo "📎 Step 4: 전체 첨부파일 처리 (Full 모드)..."
+          echo "📎 Step 4: 전체 첨부파일 URL 수집 (Full 모드)..."
           export PROCESSING_LIMIT=0
         fi
-        python scripts/kstartup_attachment_enhanced_fixed.py || echo "첨부파일 처리 실패 - 건너뛰기"
+        python scripts/kstartup_attachment_urls_only.py || echo "첨부파일 수집 실패 - 건너뛰기"
           
     - name: Generate Final Report
       if: always()
