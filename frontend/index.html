@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>정부지원사업 통합 검색 시스템</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/locale/ko.js"></script>
+    <style>
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- 헤더 -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center">
+                    <h1 class="text-2xl font-bold text-gray-900">
+                        🎯 정부지원사업 통합 검색
+                    </h1>
+                    <span class="ml-4 px-3 py-1 text-sm bg-yellow-100 text-yellow-800 rounded-full">
+                        테스트 모드
+                    </span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span class="text-sm text-gray-500">
+                        총 <span id="total-count" class="font-bold text-blue-600">50</span>개 공고
+                    </span>
+                    <span class="text-sm text-gray-500">
+                        마지막 업데이트: <span id="last-update">2025-09-30</span>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 검색 영역 -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- 검색어 -->
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        검색어
+                    </label>
+                    <input 
+                        type="text" 
+                        id="search-input"
+                        placeholder="키워드를 입력하세요 (예: AI, 창업, R&D)"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                </div>
+                
+                <!-- 출처 필터 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        출처
+                    </label>
+                    <select id="source-filter" class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                        <option value="all">전체</option>
+                        <option value="kstartup">K-Startup</option>
+                        <option value="bizinfo">BizInfo</option>
+                    </select>
+                </div>
+                
+                <!-- 검색 버튼 -->
+                <div class="flex items-end">
+                    <button 
+                        onclick="searchAnnouncements()"
+                        class="w-full px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-200"
+                    >
+                        🔍 검색
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 통계 카드 -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-500">진행중</p>
+                        <p class="text-2xl font-bold text-green-600" id="ongoing">35</p>
+                    </div>
+                    <span class="text-2xl">✅</span>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-500">마감임박</p>
+                        <p class="text-2xl font-bold text-orange-600" id="deadline">15</p>
+                    </div>
+                    <span class="text-2xl">⏰</span>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-500">K-Startup</p>
+                        <p class="text-2xl font-bold text-blue-600" id="ks-count">25</p>
+                    </div>
+                    <span class="text-2xl">🚀</span>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-500">BizInfo</p>
+                        <p class="text-2xl font-bold text-purple-600" id="bi-count">25</p>
+                    </div>
+                    <span class="text-2xl">🏢</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 결과 리스트 -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b bg-gray-50">
+                <h2 class="text-lg font-semibold">
+                    검색 결과 <span id="result-count" class="text-blue-600">(50)</span>
+                </h2>
+            </div>
+            
+            <div id="results-container" class="divide-y divide-gray-200">
+                <!-- 결과가 여기에 표시됩니다 -->
+            </div>
+            
+            <!-- 페이지네이션 -->
+            <div id="pagination" class="px-6 py-4 border-t flex justify-center space-x-2">
+                <!-- 페이지 버튼이 여기에 표시됩니다 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 상세 모달 -->
+    <div id="detail-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-2/3 shadow-lg rounded-lg bg-white">
+            <div id="modal-content">
+                <!-- 상세 내용이 여기에 표시됩니다 -->
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button 
+                    onclick="closeModal()"
+                    class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                >
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // dayjs 한국어 설정
+        dayjs.locale('ko');
+        
+        // 전역 변수
+        let currentPage = 1;
+        const itemsPerPage = 10;
+        let allData = [];
+        let filteredData = [];
+        
+        // 테스트 데이터 생성
+        function generateTestData() {
+            const organizations = ['중소벤처기업부', '과학기술정보통신부', '산업통상자원부', '고용노동부', '문화체육관광부'];
+            const categories = ['AI/빅데이터', '창업지원', 'R&D', '제조업', '소상공인', '수출지원', '인력양성'];
+            const data = [];
+            
+            for (let i = 1; i <= 50; i++) {
+                const daysUntilEnd = Math.floor(Math.random() * 60) - 10;
+                const status = daysUntilEnd < 0 ? 'closed' : daysUntilEnd <= 7 ? 'deadline' : 'ongoing';
+                const source = i % 2 === 0 ? 'kstartup' : 'bizinfo';
+                
+                data.push({
+                    id: source === 'kstartup' ? `KS_${String(i).padStart(3, '0')}` : `PBLN_${String(i).padStart(3, '0')}`,
+                    title: `2025년 ${categories[i % categories.length]} ${i % 3 === 0 ? '육성' : i % 3 === 1 ? '지원' : '활성화'} 사업`,
+                    organization: organizations[i % organizations.length],
+                    category: categories[i % categories.length],
+                    source: source,
+                    start_date: dayjs().subtract(30, 'day').add(i, 'day').format('YYYY-MM-DD'),
+                    end_date: dayjs().add(daysUntilEnd, 'day').format('YYYY-MM-DD'),
+                    simple_summary: `${categories[i % categories.length]} 분야 ${i % 2 === 0 ? '중소기업' : '스타트업'}을 위한 지원사업입니다. 최대 ${(i % 5 + 1) * 1000}만원 지원.`,
+                    detailed_summary: `이 사업은 ${categories[i % categories.length]} 분야의 혁신적인 기업을 지원하기 위한 프로그램입니다.\n\n지원 규모: ${(i % 5 + 1) * 1000}만원\n지원 대상: ${i % 2 === 0 ? '중소기업' : '스타트업'}\n선정 규모: ${(i % 10 + 1) * 10}개사`,
+                    status: status,
+                    daysLeft: daysUntilEnd
+                });
+            }
+            
+            return data;
+        }
+        
+        // 페이지 로드 시 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('페이지 로드 완료');
+            
+            // 테스트 데이터 로드
+            allData = generateTestData();
+            filteredData = [...allData];
+            
+            // 초기 표시
+            displayResults();
+            updateStatistics();
+            
+            // 이벤트 리스너 설정
+            document.getElementById('search-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchAnnouncements();
+                }
+            });
+            
+            // 마지막 업데이트 시간
+            document.getElementById('last-update').textContent = dayjs().format('YYYY-MM-DD HH:mm');
+        });
+        
+        // 검색 함수
+        function searchAnnouncements() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            const sourceFilter = document.getElementById('source-filter').value;
+            
+            filteredData = allData.filter(item => {
+                const matchesSearch = !searchTerm || 
+                    item.title.toLowerCase().includes(searchTerm) ||
+                    item.organization.toLowerCase().includes(searchTerm) ||
+                    item.category.toLowerCase().includes(searchTerm) ||
+                    item.simple_summary.toLowerCase().includes(searchTerm);
+                
+                const matchesSource = sourceFilter === 'all' || item.source === sourceFilter;
+                
+                return matchesSearch && matchesSource;
+            });
+            
+            currentPage = 1;
+            displayResults();
+            updateStatistics();
+        }
+        
+        // 결과 표시
+        function displayResults() {
+            const container = document.getElementById('results-container');
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const pageData = filteredData.slice(startIndex, endIndex);
+            
+            // 결과 개수 업데이트
+            document.getElementById('result-count').textContent = `(${filteredData.length})`;
+            
+            if (pageData.length === 0) {
+                container.innerHTML = '<div class="p-8 text-center text-gray-500">검색 결과가 없습니다.</div>';
+                document.getElementById('pagination').innerHTML = '';
+                return;
+            }
+            
+            // 결과 목록 생성
+            container.innerHTML = pageData.map(item => {
+                const daysLeft = item.daysLeft;
+                const ddayText = daysLeft < 0 ? '마감' : daysLeft === 0 ? 'D-Day' : `D-${daysLeft}`;
+                const ddayColor = daysLeft < 0 ? 'text-gray-400' : daysLeft <= 3 ? 'text-red-600' : daysLeft <= 7 ? 'text-orange-600' : 'text-blue-600';
+                const statusBadge = item.status === 'closed' ? 
+                    '<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-600">마감</span>' :
+                    item.status === 'deadline' ?
+                    '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">마감임박</span>' :
+                    '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">진행중</span>';
+                
+                return `
+                    <div class="p-6 hover:bg-gray-50 cursor-pointer transition duration-150" onclick="showDetail('${item.id}')">
+                        <div class="flex justify-between items-start">
+                            <div class="flex-1">
+                                <div class="flex items-center space-x-2 mb-2">
+                                    <span class="px-2 py-1 text-xs rounded-full ${
+                                        item.source === 'kstartup' 
+                                        ? 'bg-blue-100 text-blue-800' 
+                                        : 'bg-purple-100 text-purple-800'
+                                    }">
+                                        ${item.source === 'kstartup' ? 'K-Startup' : 'BizInfo'}
+                                    </span>
+                                    <span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700">
+                                        ${item.category}
+                                    </span>
+                                    ${statusBadge}
+                                </div>
+                                <h3 class="text-lg font-semibold text-gray-900 mb-1">
+                                    ${item.title}
+                                </h3>
+                                <p class="text-sm text-gray-600 mb-2">
+                                    ${item.organization}
+                                </p>
+                                <p class="text-sm text-gray-500">
+                                    ${item.simple_summary}
+                                </p>
+                            </div>
+                            <div class="ml-4 text-right">
+                                <p class="text-sm text-gray-500">신청 마감</p>
+                                <p class="text-lg font-bold ${ddayColor}">
+                                    ${ddayText}
+                                </p>
+                                <p class="text-xs text-gray-400">
+                                    ${dayjs(item.end_date).format('YYYY.MM.DD')}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // 페이지네이션
+            updatePagination();
+        }
+        
+        // 페이지네이션 업데이트
+        function updatePagination() {
+            const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+            const paginationContainer = document.getElementById('pagination');
+            
+            if (totalPages <= 1) {
+                paginationContainer.innerHTML = '';
+                return;
+            }
+            
+            let html = '';
+            
+            // 이전 버튼
+            if (currentPage > 1) {
+                html += `<button onclick="goToPage(${currentPage - 1})" class="px-3 py-1 rounded border hover:bg-gray-100">이전</button>`;
+            }
+            
+            // 페이지 번호
+            const maxButtons = 5;
+            let start = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+            let end = Math.min(totalPages, start + maxButtons - 1);
+            
+            for (let i = start; i <= end; i++) {
+                html += `<button onclick="goToPage(${i})" class="px-3 py-1 rounded ${
+                    i === currentPage 
+                    ? 'bg-blue-600 text-white' 
+                    : 'border hover:bg-gray-100'
+                }">${i}</button>`;
+            }
+            
+            // 다음 버튼
+            if (currentPage < totalPages) {
+                html += `<button onclick="goToPage(${currentPage + 1})" class="px-3 py-1 rounded border hover:bg-gray-100">다음</button>`;
+            }
+            
+            paginationContainer.innerHTML = html;
+        }
+        
+        // 페이지 이동
+        function goToPage(page) {
+            currentPage = page;
+            displayResults();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        // 상세 보기 (실제 API 호출)
+        async function showDetail(id) {
+            const modalContent = document.getElementById('modal-content');
+
+            // 로딩 표시
+            modalContent.innerHTML = `
+                <div class="text-center py-12">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p class="mt-4 text-gray-600">상세 정보를 불러오는 중...</p>
+                </div>
+            `;
+            document.getElementById('detail-modal').classList.remove('hidden');
+
+            try {
+                // API 호출
+                const response = await fetch(`http://localhost:8000/api/announcement/${id}`);
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error('데이터를 가져올 수 없습니다');
+                }
+
+                const item = result.data;
+                const daysLeft = item.days_left;
+                const ddayText = daysLeft === null ? '마감' : daysLeft === 0 ? 'D-Day' : `D-${daysLeft}`;
+                const ddayColor = daysLeft === null ? 'text-gray-400' : daysLeft <= 3 ? 'text-red-600' : daysLeft <= 7 ? 'text-orange-600' : 'text-blue-600';
+
+                // 첨부파일 목록 생성
+                const attachmentList = item.attachment_urls && item.attachment_urls.length > 0
+                    ? item.attachment_urls.map((url, idx) => `
+                        <a href="${url}" target="_blank" class="block p-2 hover:bg-gray-100 rounded text-blue-600">
+                            📎 첨부파일 ${idx + 1}
+                        </a>
+                    `).join('')
+                    : '<p class="text-gray-500">첨부파일이 없습니다.</p>';
+
+                modalContent.innerHTML = `
+                    <div class="mb-4">
+                        <h2 class="text-2xl font-bold text-gray-900">${item.title}</h2>
+                        <div class="flex items-center space-x-2 mt-2">
+                            <span class="px-2 py-1 text-xs rounded-full ${
+                                item.source === 'kstartup'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-purple-100 text-purple-800'
+                            }">
+                                ${item.source_name}
+                            </span>
+                            <span class="text-sm text-gray-500">${item.organization}</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="bg-gray-50 p-3 rounded">
+                            <p class="text-sm text-gray-500">신청 기간</p>
+                            <p class="font-semibold">${dayjs(item.start_date).format('YYYY.MM.DD')} ~ ${dayjs(item.end_date).format('YYYY.MM.DD')}</p>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded">
+                            <p class="text-sm text-gray-500">남은 기간</p>
+                            <p class="font-semibold ${ddayColor}">${ddayText}</p>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="font-semibold text-lg mb-2">📋 간단 요약</h3>
+                        <p class="text-gray-700">${item.simple_summary || '요약 정보가 없습니다.'}</p>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="font-semibold text-lg mb-2">📝 상세 내용</h3>
+                        <div class="text-gray-700 whitespace-pre-line max-h-96 overflow-y-auto">
+                            ${item.detailed_summary || '상세 정보가 없습니다.'}
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="font-semibold text-lg mb-2">📎 첨부파일</h3>
+                        <div class="space-y-2">
+                            ${attachmentList}
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('상세 조회 오류:', error);
+                modalContent.innerHTML = `
+                    <div class="text-center py-12">
+                        <p class="text-red-600 mb-4">❌ 오류가 발생했습니다</p>
+                        <p class="text-gray-600">${error.message}</p>
+                        <button onclick="closeModal()" class="mt-4 px-4 py-2 bg-gray-600 text-white rounded-lg">
+                            닫기
+                        </button>
+                    </div>
+                `;
+            }
+        }
+        
+        // 모달 닫기
+        function closeModal() {
+            document.getElementById('detail-modal').classList.add('hidden');
+        }
+        
+        // 통계 업데이트
+        function updateStatistics() {
+            const ongoing = filteredData.filter(d => d.status === 'ongoing').length;
+            const deadline = filteredData.filter(d => d.status === 'deadline').length;
+            const kstartup = filteredData.filter(d => d.source === 'kstartup').length;
+            const bizinfo = filteredData.filter(d => d.source === 'bizinfo').length;
+            
+            document.getElementById('total-count').textContent = filteredData.length;
+            document.getElementById('ongoing').textContent = ongoing;
+            document.getElementById('deadline').textContent = deadline;
+            document.getElementById('ks-count').textContent = kstartup;
+            document.getElementById('bi-count').textContent = bizinfo;
+        }
+        
+        // 모달 외부 클릭 시 닫기
+        window.onclick = function(event) {
+            const modal = document.getElementById('detail-modal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
