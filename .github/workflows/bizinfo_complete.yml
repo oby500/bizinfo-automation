@@ -1,4 +1,4 @@
-name: 🏢 Bizinfo Complete Workflow
+name: Bizinfo Complete Workflow
 
 on:
   workflow_dispatch:
@@ -9,48 +9,52 @@ on:
         default: 'daily'
         type: choice
         options:
-        - daily    # 최근 7일 데이터만 (빠른 처리)
-        - full     # 전체 데이터 처리 (완전 점검)
+        - daily    # 최근 7일 공고 (빠른 수집)
+        - full     # 전체 공고 수집 (오래 걸림)
   schedule:
     # UTC 기준 (한국시간 -9시간)
     # KST 16:00 = UTC 07:00
-    # KST 16:30 = UTC 07:30
-    - cron: '0 7 * * 1-5'   # 한국시간 월-금 오후 4시
-    - cron: '30 7 * * 1-5'  # 한국시간 월-금 오후 4시 30분
+    # KST 16:20 = UTC 07:20
+    # KST 16:40 = UTC 07:40
+    # KST 17:00 = UTC 08:00
+    - cron: '0 7 * * *'   # 한국시간 매일 오후 4시
+    - cron: '20 7 * * *'  # 한국시간 매일 오후 4시 20분
+    - cron: '40 7 * * *'  # 한국시간 매일 오후 4시 40분
+    - cron: '0 8 * * *'   # 한국시간 매일 오후 5시
 
 jobs:
   collect:
-    name: 기업마당 완전 자동 처리
+    name: 데이터 수집
     runs-on: ubuntu-latest
     env:
       TZ: 'Asia/Seoul'  # 한국 시간대 설정
     steps:
     - uses: actions/checkout@v3
-    
+
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-    
+
     - name: Install dependencies
       run: |
         pip install requests beautifulsoup4 supabase pandas openpyxl
         pip install selenium webdriver-manager python-dotenv chardet
-    
+
     - name: Determine Mode
       id: mode
       run: |
-        # 한국 시간 출력
-        echo "🕐 현재 한국시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
-        
+        # 현재 시간 출력
+        echo "현재 시간: $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S KST')"
+
         if [ "${{ github.event_name }}" = "schedule" ]; then
           echo "mode=daily" >> $GITHUB_OUTPUT
-          echo "📅 스케줄 실행: daily 모드"
+          echo "실행 모드: daily 모드"
         else
           echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT
-          echo "🎯 수동 실행: ${{ github.event.inputs.mode || 'daily' }} 모드"
+          echo "실행 모드: ${{ github.event.inputs.mode || 'daily' }} 모드"
         fi
-    
+
     - name: Step 0 - Data Normalization
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -58,12 +62,12 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 0: 데이터 정규화"
+        echo "실행 STEP 0: 데이터 정규화"
         echo "======================================"
-        echo "🔧 attachment_urls 데이터 타입 정규화"
-        echo "문자열로 저장된 데이터를 JSON 배열로 변환"
+        echo "설명 attachment_urls 필드 정규화"
+        echo "목적 일관된 JSON 형식"
         python scripts/bizinfo_normalize_attachments.py
-    
+
     - name: Step 1 - Excel Collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -71,45 +75,45 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 1: 기업마당 엑셀 데이터 수집"
+        echo "실행 STEP 1: 엑셀 데이터 수집"
         echo "======================================"
-        echo "🔍 모드: ${{ steps.mode.outputs.mode }}"
+        echo "모드: ${{ steps.mode.outputs.mode }}"
         python scripts/bizinfo_excel_collector.py
-    
-    - name: Step 2 - BizInfo Attachment URL Collection (빈 배열도 재처리)
+
+    - name: Step 2 - BizInfo Attachment URL Collection (병렬 처리)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 2: BizInfo 첨부파일 URL 수집 (URL만)"
+        echo "실행 STEP 2: BizInfo 첨부파일 URL 수집 (URL)"
         echo "======================================"
-        echo "🔍 모드: ${{ steps.mode.outputs.mode }}"
-        echo "🔄 빈 배열도 재처리합니다."
-        echo "📎 순수 다운로드 URL만 저장"
-        
+        echo "모드: ${{ steps.mode.outputs.mode }}"
+        echo "설명 병렬 처리 활성화됨."
+        echo "목적 첨부파일 URL 수집"
+
         if [ "${{ steps.mode.outputs.mode }}" = "daily" ]; then
-          echo "📌 Daily 모드: 최근 200개 처리"
+          echo "참고 Daily 모드: 최신 200개 처리"
           export PROCESSING_LIMIT=200
         else
-          echo "📌 Full 모드: 전체 데이터 처리"
+          echo "참고 Full 모드: 전체 처리"
           export PROCESSING_LIMIT=0
         fi
-        
+
         python scripts/bizinfo_attachment_urls_only.py || echo "첨부파일 URL 수집 실패 - 계속 진행"
-    
-    # Step 3: 잘못된 형식의 URL 정리 (URL만 남기기)
+
+    # Step 3: 첨부파일 URL 정규화 (URL 정제)
     - name: Step 3 - Clean Attachment URLs
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       run: |
         echo "======================================"
-        echo "  STEP 3: 첨부파일 URL 정리 (URL만 남기기)"
+        echo "실행 STEP 3: 첨부파일 URL 정규화 (URL 정제)"
         echo "======================================"
-        python scripts/clean_all_urls.py || echo "URL 정리 실패 - 계속 진행"
-    
+        python scripts/clean_all_urls.py || echo "URL 정규화 실패 - 계속 진행"
+
     - name: Generate Final Report
       if: always()
       env:
@@ -121,38 +125,38 @@ jobs:
         from supabase import create_client
         from datetime import datetime
         import json
-        
+
         url = os.environ.get('SUPABASE_URL')
         key = os.environ.get('SUPABASE_SERVICE_KEY')
-        
+
         if not url or not key:
-            print("환경변수 오류: SUPABASE_URL 또는 SUPABASE_SERVICE_KEY가 설정되지 않았습니다.")
+            print("환경변수 없음: SUPABASE_URL 또는 SUPABASE_SERVICE_KEY 없음.")
             exit(1)
-            
+
         supabase = create_client(url, key)
-        
-        # 실행 모드 확인
+
+        # 실행 모드
         mode = os.environ.get('MODE', 'unknown')
-        
+
         try:
-            # 전체 통계
+            # 전체 개수
             total = supabase.table('bizinfo_complete').select('id').execute()
             total_count = len(total.data) if total.data else 0
-            
-            # 오늘 추가된 데이터
+
+            # 오늘 신규 개수
             today = datetime.now().date().isoformat()
             today_new = supabase.table('bizinfo_complete').select('id').gte('created_at', today).execute()
             today_count = len(today_new.data) if today_new.data else 0
-            
-            # 정상 요약 보유 데이터 (150자 이상)
+
+            # 사업 개요 있는 개수 (150자 이상)
             all_data = supabase.table('bizinfo_complete').select('id,bsns_sumry').limit(1000).execute()
             if all_data.data:
-                with_summary = sum(1 for item in all_data.data 
+                with_summary = sum(1 for item in all_data.data
                                  if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
             else:
                 with_summary = 0
-            
-            # 첨부파일 보유 데이터 및 타입 분석
+
+            # 첨부파일 있는 개수 확인
             with_attach = supabase.table('bizinfo_complete').select('id,attachment_urls').limit(1000).execute()
             attach_count = 0
             doc_count = 0
@@ -163,27 +167,27 @@ jobs:
             getimagefile_count = 0
             unknown_count = 0
             html_count = 0
-            
-            # 깨진 문자 패턴
+
+            # 깨진 인코딩 패턴
             broken_patterns = ['â', 'ì', 'ë', 'í', 'ê', 'ã', 'ð', 'þ', 'ï', '¿', '½', 'Ã', 'Â']
-            
+
             for item in with_attach.data:
                 attachments = item.get('attachment_urls')
                 if attachments:
-                    # 문자열인 경우 JSON 파싱
+                    # 문자열이면 JSON 파싱
                     if isinstance(attachments, str):
                         try:
                             attachments = json.loads(attachments)
                         except:
                             continue
-                    
+
                     if isinstance(attachments, list) and len(attachments) > 0:
                         attach_count += 1
                         for att in attachments:
                             if isinstance(att, dict):
                                 file_type = att.get('type', '')
                                 filename = att.get('display_filename', '')
-                                
+
                                 if file_type == 'getImageFile':
                                     getimagefile_count += 1
                                 elif file_type == 'DOC':
@@ -196,68 +200,68 @@ jobs:
                                     hwp_count += 1
                                 elif file_type == 'PDF':
                                     pdf_count += 1
-                                    
-                                if filename == '다운로드':
+
+                                if filename == '':
                                     download_count += 1
-                                # 깨진 파일명 체크
+                                # 깨진 파일명 확인
                                 if any(pattern in filename for pattern in broken_patterns):
                                     broken_count += 1
-            
+
             print('\n' + '='*60)
-            print('      🏢 기업마당 처리 결과 보고서')
+            print('          최종 리포트')
             print('='*60)
-            print(f'🔍 실행 모드: {mode.upper()}')
-            print(f'📊 전체 데이터: {total_count}개')
-            print(f'📊 오늘 신규 추가: {today_count}개')
-            print(f'📊 정상 요약 보유 (샘플 1000개): {with_summary}개 ({with_summary*100/min(1000, total_count):.1f}%)')
-            print(f'📊 첨부파일 보유 (샘플 1000개): {attach_count}개 ({attach_count*100/min(1000, total_count):.1f}%)')
-            
-            # 파일 타입 분포
-            print(f'\n📁 파일 타입 분포 (샘플 1000개):')
-            print(f'   - HWP: {hwp_count}개 ✅')
-            print(f'   - PDF: {pdf_count}개 ✅')
-            
-            # 문제 타입들
+            print(f'모드: {mode.upper()}')
+            print(f'총합: {total_count}개')
+            print(f'오늘 신규: {today_count}개')
+            print(f'사업개요 있음 (샘플 1000개): {with_summary}개 ({with_summary*100/min(1000, total_count):.1f}%)')
+            print(f'첨부파일 있음 (샘플 1000개): {attach_count}개 ({attach_count*100/min(1000, total_count):.1f}%)')
+
+            # 파일 타입별 통계
+            print(f'\n첨부파일 타입별 (샘플 1000개):')
+            print(f'   - HWP: {hwp_count}개')
+            print(f'   - PDF: {pdf_count}개')
+
+            # 문제 파일들
             problem_types = []
             if getimagefile_count > 0:
-                problem_types.append(f'   - getImageFile: {getimagefile_count}개 ⚠️ 타입 오류')
+                problem_types.append(f'   - getImageFile: {getimagefile_count}개 (수집 불가)')
             if doc_count > 0:
-                problem_types.append(f'   - DOC: {doc_count}개 ⚠️ 수정 필요')
+                problem_types.append(f'   - DOC: {doc_count}개 (수집 불가)')
             if html_count > 0:
-                problem_types.append(f'   - HTML: {html_count}개 ⚠️ 수정 필요')
+                problem_types.append(f'   - HTML: {html_count}개 (수집 불가)')
             if unknown_count > 0:
-                problem_types.append(f'   - UNKNOWN: {unknown_count}개 ⚠️ 수정 필요')
-            
+                problem_types.append(f'   - UNKNOWN: {unknown_count}개 (수집 불가)')
+
             if problem_types:
-                print('\n🚨 문제 타입:')
+                print('\n문제 타입:')
                 for pt in problem_types:
                     print(pt)
-            
+
             if download_count > 0:
-                print(f'\n📎 파일명 문제:')
-                print(f'   - "다운로드" 파일명: {download_count}개 ⚠️')
+                print(f'\n파일명 문제:')
+                print(f'   - "다운로드" 파일: {download_count}개')
             if broken_count > 0:
-                print(f'   - 깨진 파일명: {broken_count}개 ⚠️')
-            
-            # 최근 데이터 상태 점검
+                print(f'   - 깨진 인코딩: {broken_count}개')
+
+            # 최근 데이터 품질 확인
             recent = supabase.table('bizinfo_complete').select('id,attachment_urls,bsns_sumry,created_at').order('created_at', desc=True).limit(100).execute()
             if recent.data:
-                recent_with_attach = sum(1 for item in recent.data 
+                recent_with_attach = sum(1 for item in recent.data
                                        if item.get('attachment_urls') and item['attachment_urls'] != [])
-                recent_with_summary = sum(1 for item in recent.data 
+                recent_with_summary = sum(1 for item in recent.data
                                         if item.get('bsns_sumry') and len(item['bsns_sumry']) > 150)
                 recent_broken = 0
                 recent_getimagefile = 0
                 for item in recent.data:
                     attachments = item.get('attachment_urls')
                     if attachments:
-                        # 문자열 처리
+                        # 파싱
                         if isinstance(attachments, str):
                             try:
                                 attachments = json.loads(attachments)
                             except:
                                 continue
-                        
+
                         if isinstance(attachments, list):
                             for att in attachments:
                                 if isinstance(att, dict):
@@ -269,71 +273,71 @@ jobs:
                                     if file_type == 'getImageFile':
                                         recent_getimagefile += 1
                                         break
-                
-                print(f'\n📌 최근 100개 데이터:')
-                print(f'   - 첨부파일 보유: {recent_with_attach}개 ({recent_with_attach}%)')
-                print(f'   - 정상 요약: {recent_with_summary}개 ({recent_with_summary}%)')
+
+                print(f'\n최근 100개 품질:')
+                print(f'   - 첨부파일: {recent_with_attach}개 ({recent_with_attach}%)')
+                print(f'   - 사업개요: {recent_with_summary}개 ({recent_with_summary}%)')
                 if recent_broken > 0:
-                    print(f'   - 깨진 파일명: {recent_broken}개 ⚠️')
+                    print(f'   - 깨진 인코딩: {recent_broken}개')
                 if recent_getimagefile > 0:
-                    print(f'   - getImageFile 타입: {recent_getimagefile}개 ⚠️')
-                
+                    print(f'   - getImageFile 문제: {recent_getimagefile}개')
+
                 if recent_with_attach < 70:
-                    print('   ⚠️ 경고: 최근 데이터 첨부파일 수집률이 낮습니다!')
+                    print('경고 첨부파일 비율:     너무 낮음!')
                 if recent_with_summary < 70:
-                    print('   ⚠️ 경고: 최근 데이터 요약 품질이 낮습니다!')
-            
-            # 품질 체크
+                    print('경고 사업개요 비율:     너무 낮음!')
+
+            # 품질 평가
             quality_score = (with_summary / min(1000, total_count) * 100) if total_count > 0 else 0
             attach_score = (attach_count / min(1000, total_count) * 100) if total_count > 0 else 0
-            
-            print('\n📈 품질 평가:')
+
+            print('\n전반적 평가:')
             if quality_score >= 90:
-                print('  ✅ 요약 품질: 우수 (90% 이상)')
+                print('    사업개요 품질: 우수 (90% 이상)')
             elif quality_score >= 70:
-                print('  ⚠️ 요약 품질: 보통 (70-90%)')
+                print('    사업개요 품질: 양호 (70-90%)')
             else:
-                print('  ❌ 요약 품질: 개선 필요 (70% 미만)')
-            
+                print('    사업개요 품질: 개선 필요 (70% 미만)')
+
             if attach_score >= 90:
-                print('  ✅ 첨부파일: 우수 (90% 이상)')
+                print('   첨부파일 품질: 우수 (90% 이상)')
             elif attach_score >= 70:
-                print('  ⚠️ 첨부파일: 보통 (70-90%)')
+                print('   첨부파일 품질: 양호 (70-90%)')
             else:
-                print('  ❌ 첨부파일: 개선 필요 (70% 미만)')
-            
-            # 문제 평가
+                print('   첨부파일 품질: 개선 필요 (70% 미만)')
+
+            # 문제 총합
             total_problems = getimagefile_count + doc_count + html_count + unknown_count + broken_count + download_count
             if total_problems == 0:
-                print('  ✅ 파일 타입: 완벽 (문제 없음)')
+                print('    문제 파일 없음: 완벽 (문제 없음)')
             elif total_problems < 10:
-                print(f'  ⚠️ 파일 타입: {total_problems}개 문제 감지 (미미함)')
+                print(f'    문제 파일 있음: {total_problems}개 정도 (양호)')
             else:
-                print(f'  🚨 파일 타입: {total_problems}개 문제 감지 (처리 필요)')
-            
-            # 모드별 처리 방식 안내
-            print('\n🔧 처리 단계:')
+                print(f'    문제 파일 있음: {total_problems}개 정도 (개선 필요)')
+
+            # 실행 단계 요약
+            print('\n실행 단계 요약:')
             print('  STEP 0: 데이터 정규화')
             print('  STEP 1: 엑셀 데이터 수집')
-            print('  STEP 2: K-Startup 방식 첨부파일 처리')
-            print('  STEP 3: 첨부파일 정리')
-            print('  STEP 4: 깨진 파일명 완전 해결 (3단계 복구)')
-            print('  STEP 5: 레거시 데이터 문제 해결')
-            
+            print('  STEP 2: K-Startup 첨부파일 수집')
+            print('  STEP 3: 첨부파일 정규화')
+            print('  STEP 4: 첨부파일 다운로드 (3단계 파이프라인)')
+            print('  STEP 5: 텍스트 추출')
+
             if today_count > 0:
-                print(f'\n✅ 오늘 {today_count}개 처리 성공!')
+                print(f'\n오늘 {today_count}개 추가 완료!')
             else:
-                print('\n⚠️ 오늘 새로운 데이터가 없습니다')
-            
-            # K-Startup 상태도 확인
+                print('\n오늘은 신규 데이터 없음')
+
+            # K-Startup 현황
             k_total = supabase.table('kstartup_complete').select('id').execute()
             k_total_count = len(k_total.data) if k_total.data else 0
-            print(f'\n📊 K-Startup 현황: {k_total_count}개 (참고)')
-            
+            print(f'\n참고 K-Startup 총합: {k_total_count}개 (참고)')
+
             print('='*60)
-            
+
         except Exception as e:
-            print(f"보고서 생성 중 오류: {e}")
+            print(f"오류 발생: {e}")
             exit(1)
         EOF
         MODE=${{ steps.mode.outputs.mode }} python report.py
