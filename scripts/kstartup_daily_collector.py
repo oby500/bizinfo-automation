@@ -243,19 +243,29 @@ def main():
     
     # 기존 데이터 조회 (전체 가져오기 - Supabase는 기본 1000개 제한이 있음)
     # 여러 페이지로 나눠서 가져오기
+    print(" 기존 데이터 로딩 중...")
     existing_ids = set()
     offset = 0
     limit = 1000
+    page_count = 0
     while True:
         existing = supabase.table('kstartup_complete').select('announcement_id').range(offset, offset + limit - 1).execute()
         if not existing.data:
             break
+
+        page_count += 1
         for item in existing.data:
             existing_ids.add(item['announcement_id'])
+
+        print(f" - 페이지 {page_count}: {len(existing.data)}개 로드 (누적: {len(existing_ids)}개)")
+
+        # 1000개 미만이면 마지막 페이지
         if len(existing.data) < limit:
             break
+
         offset += limit
-    print(f" 기존 데이터: {len(existing_ids)}개\n")
+
+    print(f" ✅ 기존 데이터: {len(existing_ids)}개 로드 완료\n")
     
     # 첫 페이지로 전체 개수 확인
     items, total_count, _ = fetch_page(1, 10)
