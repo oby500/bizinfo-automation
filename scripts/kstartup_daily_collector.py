@@ -64,28 +64,33 @@ def parse_xml_item(item):
     
     return data
 
-def fetch_attachments_from_detail_page(detail_url):
-    """상세페이지에서 첨부파일 추출"""
+def fetch_attachments_and_dates_from_detail_page(detail_url):
+    """
+    상세페이지에서 첨부파일 및 날짜 정보 추출
+    Returns: tuple (attachments: list, start_date: str, end_date: str)
+    """
     try:
         response = session.get(detail_url, timeout=10)
         if response.status_code != 200:
-            return []
-        
+            return [], None, None
+
         soup = BeautifulSoup(response.text, 'html.parser')
         attachments = []
-        
-        # 다양한 첨부파일 링크 패턴 찾기
+        start_date = None
+        end_date = None
+
+        # === 첨부파일 수집 ===
         # 1. 직접 다운로드 링크
         download_links = soup.find_all('a', href=re.compile(r'(/cmm/fms/FileDown\.do|/afile/fileDownload/|download\.do)'))
-        
+
         for link in download_links:
             href = link.get('href', '')
             text = link.get_text(strip=True) or '첨부파일'
-            
+
             # 절대 URL로 변환
             if href.startswith('/'):
                 href = f"https://www.k-startup.go.kr{href}"
-            
+
             # 중복 제거
             if href not in [a.get('url') for a in attachments]:
                 attachments.append({
@@ -93,39 +98,70 @@ def fetch_attachments_from_detail_page(detail_url):
                     'filename': text,
                     'type': 'FILE'
                 })
-        
+
         # 2. onclick 형태의 다운로드
         onclick_links = soup.find_all('a', onclick=re.compile(r'fileDown|download'))
         for link in onclick_links:
             onclick = link.get('onclick', '')
             text = link.get_text(strip=True) or '첨부파일'
-            
+
             # onclick에서 파일 ID 추출
             match = re.search(r"['\"](\d+)['\"]", onclick)
             if match:
                 file_id = match.group(1)
                 url = f"https://www.k-startup.go.kr/cmm/fms/FileDown.do?fileNo={file_id}"
-                
+
                 if url not in [a.get('url') for a in attachments]:
                     attachments.append({
                         'url': url,
                         'filename': text,
                         'type': 'FILE'
                     })
-        
-        return attachments
-        
+
+        # === 날짜 정보 수집 ===
+        all_text = soup.get_text()
+
+        # 패턴 1: "접수기간 YYYY-MM-DD ~ YYYY-MM-DD" 형식
+        date_range_pattern = r'(?:접수기간|신청기간|모집기간)\s*[:\s]*(\d{4}[-./]\d{1,2}[-./]\d{1,2})\s*~\s*(\d{4}[-./]\d{1,2}[-./]\d{1,2})'
+        match = re.search(date_range_pattern, all_text)
+        if match:
+            start_date = match.group(1).replace('.', '-').replace('/', '-')
+            end_date = match.group(2).replace('.', '-').replace('/', '-')
+
+        # 패턴 2: 테이블에서 찾기 (패턴 1 실패 시)
+        if not start_date or not end_date:
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['th', 'td'])
+                    if len(cells) >= 2:
+                        header = cells[0].get_text(strip=True)
+                        value = cells[1].get_text(strip=True)
+
+                        if any(kw in header for kw in ['접수기간', '신청기간', '모집기간']):
+                            # 값에서 날짜 추출
+                            dates = re.findall(r'(\d{4}[-./]\d{1,2}[-./]\d{1,2})', value)
+                            if len(dates) >= 2:
+                                start_date = dates[0].replace('.', '-').replace('/', '-')
+                                end_date = dates[1].replace('.', '-').replace('/', '-')
+                                break
+                if start_date and end_date:
+                    break
+
+        return attachments, start_date, end_date
+
     except Exception as e:
-        print(f"    [첨부파일 추출 오류]: {str(e)[:50]}")
-        return []
+        print(f"    [상세페이지 추출 오류]: {str(e)[:50]}")
+        return [], None, None
 
 def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져오기
     """API에서 페이지 데이터 가져오기"""
     try:
         params = {
             'serviceKey': unquote(SERVICE_KEY),
-            'page': page_no,  # pageNo → page로 변경 (구글시트와 동일)
-            'perPage': num_of_rows  # numOfRows → perPage로 변경
+            'page': page_no,  # pageNo  page로 변경 (구글시트와 동일)
+            'perPage': num_of_rows  # numOfRows  perPage로 변경
         }
         
         response = requests.get(API_URL, params=params, timeout=30)
@@ -201,8 +237,8 @@ def fetch_page(page_no, num_of_rows=200):  # 구글시트처럼 200개씩 가져
 def main():
     """메인 실행"""
     print("="*60)
-    print(f"🚀 K-Startup 공공데이터 API 수집 시작 ({COLLECTION_MODE} 모드)")
-    print("📎 첨부파일 수집 포함")
+    print(f" K-Startup 공공데이터 API 수집 시작 ({COLLECTION_MODE} 모드)")
+    print(" 첨부파일 수집 포함")
     print("="*60)
     
     # 기존 데이터 조회 (전체 가져오기 - Supabase는 기본 1000개 제한이 있음)
@@ -219,7 +255,7 @@ def main():
         if len(existing.data) < limit:
             break
         offset += limit
-    print(f"✅ 기존 데이터: {len(existing_ids)}개\n")
+    print(f" 기존 데이터: {len(existing_ids)}개\n")
     
     # 첫 페이지로 전체 개수 확인
     items, total_count, _ = fetch_page(1, 10)
@@ -228,17 +264,17 @@ def main():
         print("[ERROR] API 접근 실패")
         return
     
-    print(f"📊 전체 공고 수: {total_count}개")
+    print(f" 전체 공고 수: {total_count}개")
     
     # 모드별 설정
     if COLLECTION_MODE == 'full':
         # Full 모드는 최대 20페이지까지만 (2000개)
         total_pages = min(20, (total_count // 100) + 1)
-        print(f"📊 Full 모드: {total_pages}페이지 수집 (최대 2000개)")
+        print(f" Full 모드: {total_pages}페이지 수집 (최대 2000개)")
     else:
         # Daily 모드는 최대 3페이지 (300개)
         total_pages = min(3, (total_count // 100) + 1)
-        print(f"📊 Daily 모드: {total_pages}페이지 수집 (최대 300개)")
+        print(f" Daily 모드: {total_pages}페이지 수집 (최대 300개)")
     
     all_new = 0
     all_updated = 0
@@ -269,11 +305,26 @@ def main():
         
         for item in items:
             try:
-                # 첨부파일 수집 (새로운 공고만)
-                if item['announcement_id'] not in existing_ids and item.get('detl_pg_url'):
-                    attachments = fetch_attachments_from_detail_page(item['detl_pg_url'])
+                # 첨부파일 및 날짜 정보 수집
+                needs_scraping = (
+                    item['announcement_id'] not in existing_ids and item.get('detl_pg_url')
+                ) or (
+                    # 날짜 정보가 없는 경우에도 스크래핑 시도
+                    not item.get('pbanc_rcpt_bgng_dt') or not item.get('pbanc_rcpt_end_dt')
+                )
+
+                if needs_scraping and item.get('detl_pg_url'):
+                    attachments, start_date, end_date = fetch_attachments_and_dates_from_detail_page(item['detl_pg_url'])
                     item['attachment_urls'] = attachments
-                    # attachment_count 제거 - attachment_urls 길이로 계산 가능
+
+                    # API에서 날짜가 없으면 스크래핑한 날짜 사용
+                    if not item.get('pbanc_rcpt_bgng_dt') and start_date:
+                        item['pbanc_rcpt_bgng_dt'] = start_date
+                        print(f"    [날짜 스크래핑] {item['announcement_id']}: {start_date} ~ {end_date}")
+
+                    if not item.get('pbanc_rcpt_end_dt') and end_date:
+                        item['pbanc_rcpt_end_dt'] = end_date
+
                     if attachments:
                         attach_count += 1
                 else:
@@ -286,7 +337,7 @@ def main():
                     
                     # 연속 50개 중복 시 종료 (구글시트는 10개지만 우리는 좀 더 여유있게)
                     if consecutive_duplicates >= 50:
-                        print(f"\n📌 연속 {consecutive_duplicates}개 중복 → 수집 종료")
+                        print(f"\n 연속 {consecutive_duplicates}개 중복  수집 종료")
                         all_new += new_count
                         all_updated += update_count
                         all_attachments += attach_count
@@ -336,13 +387,13 @@ def main():
     
     # 최종 보고
     print("\n" + "="*60)
-    print("📊 K-Startup 공공데이터 API 수집 완료")
+    print(" K-Startup 공공데이터 API 수집 완료")
     print("="*60)
-    print(f"✅ 신규: {all_new}개")
-    print(f"📝 업데이트: {all_updated}개")
-    print(f"📎 첨부파일 수집: {all_attachments}개 공고")
-    print(f"❌ 오류: {errors}개")
-    print(f"📊 전체: {all_new + all_updated}개 처리")
+    print(f" 신규: {all_new}개")
+    print(f" 업데이트: {all_updated}개")
+    print(f" 첨부파일 수집: {all_attachments}개 공고")
+    print(f" 오류: {errors}개")
+    print(f" 전체: {all_new + all_updated}개 처리")
     print("="*60)
 
 if __name__ == "__main__":
