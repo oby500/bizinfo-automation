@@ -837,7 +837,7 @@ export default function HomePage() {
                 </div>
 
                 <Button
-                  onClick={useAISearch ? handleSemanticSearch : handleSearch}
+                  onClick={() => useAISearch ? handleSemanticSearch() : handleSearch()}
                   className="bg-blue-600 hover:bg-blue-700 h-12 px-8"
                 >
                   검색
