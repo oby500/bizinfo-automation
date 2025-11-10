@@ -19,16 +19,9 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Loader2, CheckCircle2, AlertCircle, Download } from 'lucide-react'
 
-interface Announcement {
-  announcement_id: string
-  title: string
-  organization: string
-  end_date: string
-  status: string
-}
-
 interface ApplicationWriterProps {
-  announcement: Announcement
+  announcementId: string
+  announcementSource: 'kstartup' | 'bizinfo'
 }
 
 type Step = 'analyze' | 'company-info' | 'tier-select' | 'generating' | 'completed'
@@ -64,7 +57,7 @@ interface CompanyAnalysis {
   }
 }
 
-export function ApplicationWriter({ announcement }: ApplicationWriterProps) {
+export function ApplicationWriter({ announcementId, announcementSource }: ApplicationWriterProps) {
   const [step, setStep] = useState<Step>('analyze')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -105,7 +98,8 @@ export function ApplicationWriter({ announcement }: ApplicationWriterProps) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          announcement_id: announcement.announcement_id,
+          announcement_id: announcementId,
+        announcement_source: announcementSource,
           source: 'kstartup', // or 'bizinfo'
           force_refresh: false
         })
@@ -284,9 +278,9 @@ export function ApplicationWriter({ announcement }: ApplicationWriterProps) {
           <div className="space-y-4">
             <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
               <h3 className="font-semibold mb-2">📋 공고 정보</h3>
-              <p className="text-sm text-gray-700">{announcement.title}</p>
+              <p className="text-sm text-gray-700">{announcementId}</p>
               <p className="text-sm text-gray-500 mt-1">
-                주관: {announcement.organization} | 마감: {announcement.end_date}
+                주관: {""} | 마감: {""}
               </p>
             </div>
 
