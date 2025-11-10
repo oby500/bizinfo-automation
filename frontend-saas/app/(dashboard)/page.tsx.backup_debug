@@ -1,0 +1,1253 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Search, Filter, Calendar, Building2 } from 'lucide-react';
+
+interface Announcement {
+  id: string;
+  title: string;
+  organization: string;
+  source: string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  category?: string;
+  simple_summary?: string;
+  detailed_summary?: string;
+  created_at?: string;
+  views?: number;
+  relevance?: number; // AI 검색 유사도 점수
+}
+
+interface SearchFilters {
+  status: 'all' | 'ongoing' | 'deadline';
+  category?: string;
+  region?: string;
+  target?: string;
+  age?: string;
+  businessYear?: string;
+  sort?: 'newest' | 'deadline' | 'views' | 'relevance';
+}
+
+interface FilterOptions {
+  categories: string[];
+  regions: string[];
+  targets: string[];
+  ages: string[];
+  business_years: string[];
+}
+
+export default function HomePage() {
+  const router = useRouter();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState<SearchFilters>({
+    status: 'all',
+    sort: 'newest'
+  });
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    categories: [],
+    regions: [],
+    targets: [],
+    ages: [],
+    business_years: []
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
+  const [useAISearch, setUseAISearch] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [compareList, setCompareList] = useState<Announcement[]>([]);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [recentViews, setRecentViews] = useState<any[]>([]);
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
+  const [userBalance, setUserBalance] = useState(0);
+  const [userName, setUserName] = useState<string>('사용자');
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const PAGE_SIZE = 20;
+  const MAX_COMPARE = 3;
+
+  // 일반 검색 함수 (첫 검색)
+  const handleSearch = async (resetPage = true) => {
+    if (!searchQuery.trim()) return;
+
+    setLoading(true);
+    setError(null);
+
+    const page = resetPage ? 1 : currentPage;
+
+    try {
+      const params = new URLSearchParams({
+        q: searchQuery,
+        page: page.toString(),
+        limit: PAGE_SIZE.toString(),
+      });
+
+      if (filters.status !== 'all') {
+        params.append('status', filters.status);
+      }
+
+      if (filters.sort) {
+        params.append('sort', filters.sort);
+      }
+
+      const response = await fetch(`${API_URL}/api/search?${params}`);
+
+      if (!response.ok) {
+        throw new Error(`검색 실패: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (resetPage) {
+        setAnnouncements(data.results || []);
+        setCurrentPage(1);
+      } else {
+        setAnnouncements(prev => [...prev, ...(data.results || [])]);
+      }
+
+      setTotalResults(data.total || 0);
+    } catch (error) {
+      console.error('검색 실패:', error);
+      setError(error instanceof Error ? error.message : '검색 중 오류가 발생했습니다.');
+      if (resetPage) {
+        setAnnouncements([]);
+        setTotalResults(0);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  // AI 의미 검색 함수 (첫 검색)
+  const handleSemanticSearch = async (resetPage = true) => {
+    if (!searchQuery.trim()) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        q: searchQuery,
+        threshold: '0.5',
+        limit: PAGE_SIZE.toString(),
+      });
+
+      if (filters.status !== 'all') {
+        params.append('status', filters.status);
+      }
+
+      const response = await fetch(`${API_URL}/api/search/semantic?${params}`);
+
+      if (!response.ok) {
+        throw new Error('AI 검색 서비스를 사용할 수 없습니다. 일반 검색으로 전환합니다.');
+      }
+
+      const data = await response.json();
+
+      // 의미 검색 결과를 일반 검색과 동일한 형식으로 변환
+      const semanticResults = (data.data || []).map((item: any) => ({
+        ...item,
+        relevance: item.similarity, // 유사도 점수 추가
+      }));
+
+      if (resetPage) {
+        setAnnouncements(semanticResults);
+        setCurrentPage(1);
+      } else {
+        setAnnouncements(prev => [...prev, ...semanticResults]);
+      }
+
+      setTotalResults(data.total || 0);
+    } catch (error) {
+      console.error('AI 검색 실패:', error);
+      setError(error instanceof Error ? error.message : 'AI 검색 실패. 일반 검색으로 전환합니다.');
+      // 실패 시 일반 검색으로 폴백
+      await handleSearch(resetPage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 필터 옵션 로드
+  useEffect(() => {
+    async function fetchFilterOptions() {
+      try {
+        const response = await fetch(`${API_URL}/api/filters`);
+        const data = await response.json();
+        if (data.success) {
+          setFilterOptions(data.filters);
+        }
+      } catch (error) {
+        console.error('필터 옵션 로딩 실패:', error);
+      }
+    }
+    fetchFilterOptions();
+  }, []);
+
+  // 최근 공고 불러오기 (초기 로딩 - 마감된 공고 제외)
+  useEffect(() => {
+    async function fetchRecent() {
+      try {
+        const response = await fetch(`${API_URL}/api/recent?limit=20&status=ongoing`);
+        const data = await response.json();
+        setAnnouncements(data.results || []);
+        setTotalResults(data.total || 0);
+      } catch (error) {
+        console.error('최근 공고 로딩 실패:', error);
+      }
+    }
+    fetchRecent();
+  }, []);
+
+  // 페이지 변경 핸들러
+  const handlePageChange = async (newPage: number) => {
+    setCurrentPage(newPage);
+    setLoading(true);
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    try {
+      const params = new URLSearchParams({
+        q: searchQuery || '',
+        page: newPage.toString(),
+        limit: PAGE_SIZE.toString(),
+      });
+
+      if (filters.status !== 'all') {
+        params.append('status', filters.status);
+      }
+
+      if (filters.sort) {
+        params.append('sort', filters.sort);
+      }
+
+      const endpoint = useAISearch ? '/api/search/semantic' : (searchQuery ? '/api/search' : '/api/recent');
+      const response = await fetch(`${API_URL}${endpoint}?${params}`);
+
+      if (!response.ok) {
+        throw new Error('페이지 로드 실패');
+      }
+
+      const data = await response.json();
+      const results = useAISearch
+        ? (data.data || []).map((item: any) => ({ ...item, relevance: item.similarity }))
+        : (data.results || []);
+
+      setAnnouncements(results);
+      setTotalResults(data.total || 0);
+    } catch (error) {
+      console.error('페이지 로딩 실패:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 알림 권한 확인 및 정기 체크
+  useEffect(() => {
+    // 브라우저 알림 권한 상태 확인
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+
+      // 권한이 있으면 알림 체크
+      if (Notification.permission === 'granted') {
+        checkAndSetupNotifications();
+
+        // 매 시간마다 알림 체크 (1시간 = 3600000ms)
+        const interval = setInterval(checkAndSetupNotifications, 3600000);
+        return () => clearInterval(interval);
+      }
+    }
+
+    // 최근 본 공고 로드
+    loadRecentViews();
+
+    // 북마크 로드
+    loadBookmarks();
+
+    // 사용자 잔액 로드
+    loadUserBalance();
+
+    // 사용자 정보 로드
+    loadUserInfo();
+  }, []);
+
+  // 검색어 입력 처리
+  const handleSearchInput = async (value: string) => {
+    setSearchQuery(value);
+
+    if (value.trim().length >= 2) {
+      try {
+        const response = await fetch(`${API_URL}/api/suggestions?q=${encodeURIComponent(value)}`);
+        const data = await response.json();
+
+        if (data.success) {
+          setSuggestions(data.suggestions || []);
+          setShowSuggestions(true);
+        }
+      } catch (error) {
+        console.error('자동완성 조회 실패:', error);
+        setSuggestions([]);
+      }
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  // 제안 선택
+  const handleSuggestionClick = (suggestion: string) => {
+    setSearchQuery(suggestion);
+    setShowSuggestions(false);
+    setSuggestions([]);
+  };
+
+  // 엔터키로 검색
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      setShowSuggestions(false);
+      useAISearch ? handleSemanticSearch() : handleSearch();
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false);
+    }
+  };
+
+  // D-Day 계산 함수
+  const calculateDday = (endDate: string) => {
+    const today = new Date();
+    const end = new Date(endDate);
+    const diffTime = end.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
+  // 카테고리별 색상 반환
+  const getCategoryColor = (category?: string) => {
+    if (!category) return 'bg-gray-100 text-gray-700';
+
+    const lowerCategory = category.toLowerCase();
+
+    if (lowerCategory.includes('창업')) return 'bg-blue-100 text-blue-700';
+    if (lowerCategory.includes('기술') || lowerCategory.includes('R&D')) return 'bg-purple-100 text-purple-700';
+    if (lowerCategory.includes('수출') || lowerCategory.includes('해외')) return 'bg-green-100 text-green-700';
+    if (lowerCategory.includes('고용') || lowerCategory.includes('인력')) return 'bg-orange-100 text-orange-700';
+    if (lowerCategory.includes('시설') || lowerCategory.includes('설비')) return 'bg-teal-100 text-teal-700';
+    if (lowerCategory.includes('자금') || lowerCategory.includes('융자')) return 'bg-red-100 text-red-700';
+    if (lowerCategory.includes('교육') || lowerCategory.includes('컨설팅')) return 'bg-indigo-100 text-indigo-700';
+    if (lowerCategory.includes('마케팅') || lowerCategory.includes('판로')) return 'bg-pink-100 text-pink-700';
+
+    return 'bg-gray-100 text-gray-700';
+  };
+
+  // 최근 본 공고 로드
+  const loadRecentViews = () => {
+    try {
+      const recent = JSON.parse(localStorage.getItem('recentAnnouncements') || '[]');
+      setRecentViews(recent);
+    } catch (error) {
+      console.error('최근 본 공고 로드 실패:', error);
+    }
+  };
+
+  // 최근 본 공고 저장 (로컬 스토리지)
+  const saveRecentView = (announcement: Announcement) => {
+    try {
+      const recent = JSON.parse(localStorage.getItem('recentAnnouncements') || '[]');
+
+      // 중복 제거 (같은 ID가 있으면 제거)
+      const filtered = recent.filter((item: any) => item.id !== announcement.id);
+
+      // 맨 앞에 추가
+      const updated = [
+        {
+          id: announcement.id,
+          title: announcement.title,
+          organization: announcement.organization,
+          end_date: announcement.end_date,
+          viewedAt: new Date().toISOString()
+        },
+        ...filtered
+      ].slice(0, 10); // 최대 10개만 저장
+
+      localStorage.setItem('recentAnnouncements', JSON.stringify(updated));
+      setRecentViews(updated); // 상태 업데이트
+    } catch (error) {
+      console.error('최근 본 공고 저장 실패:', error);
+    }
+  };
+
+  // 공고 클릭 핸들러
+  const handleAnnouncementClick = (announcement: Announcement) => {
+    saveRecentView(announcement);
+    router.push(`/announcement/${announcement.id}`);
+  };
+
+  // 브라우저 알림 권한 요청
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      alert('이 브라우저는 알림을 지원하지 않습니다.');
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+
+    if (permission === 'granted') {
+      // 테스트 알림
+      new Notification('알림이 활성화되었습니다', {
+        body: '마감 임박 공고에 대한 알림을 받으실 수 있습니다.',
+        icon: '/logo.png'
+      });
+
+      // 알림 설정 활성화
+      checkAndSetupNotifications();
+    }
+  };
+
+  // 마감 알림 설정
+  const setupDeadlineNotification = (announcement: Announcement) => {
+    try {
+      const notifications = JSON.parse(localStorage.getItem('deadlineNotifications') || '[]');
+
+      // 이미 등록된 공고인지 확인
+      const exists = notifications.find((item: any) => item.id === announcement.id);
+      if (exists) {
+        alert('이미 알림이 설정된 공고입니다.');
+        return;
+      }
+
+      // 알림 추가
+      const updated = [
+        ...notifications,
+        {
+          id: announcement.id,
+          title: announcement.title,
+          end_date: announcement.end_date,
+          createdAt: new Date().toISOString()
+        }
+      ];
+
+      localStorage.setItem('deadlineNotifications', JSON.stringify(updated));
+      alert('마감 알림이 설정되었습니다. (D-3, D-1에 알림)');
+    } catch (error) {
+      console.error('알림 설정 실패:', error);
+    }
+  };
+
+  // 알림 체크 및 발송
+  const checkAndSetupNotifications = () => {
+    if (notificationPermission !== 'granted') return;
+
+    try {
+      const notifications = JSON.parse(localStorage.getItem('deadlineNotifications') || '[]');
+      const today = new Date();
+
+      notifications.forEach((item: any) => {
+        const endDate = new Date(item.end_date);
+        const diffTime = endDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        // D-3 또는 D-1 알림
+        if (diffDays === 3 || diffDays === 1) {
+          new Notification(`마감 ${diffDays}일 전!`, {
+            body: item.title,
+            icon: '/logo.png',
+            tag: `deadline-${item.id}-${diffDays}`
+          });
+        }
+
+        // 마감일 지난 알림 삭제
+        if (diffDays < 0) {
+          const filtered = notifications.filter((n: any) => n.id !== item.id);
+          localStorage.setItem('deadlineNotifications', JSON.stringify(filtered));
+        }
+      });
+    } catch (error) {
+      console.error('알림 체크 실패:', error);
+    }
+  };
+
+  // 비교 목록에 추가/제거
+  const toggleCompare = (announcement: Announcement) => {
+    const exists = compareList.find(item => item.id === announcement.id);
+
+    if (exists) {
+      // 이미 있으면 제거
+      setCompareList(compareList.filter(item => item.id !== announcement.id));
+    } else {
+      // 없으면 추가 (최대 3개)
+      if (compareList.length >= MAX_COMPARE) {
+        alert(`최대 ${MAX_COMPARE}개까지 비교할 수 있습니다.`);
+        return;
+      }
+      setCompareList([...compareList, announcement]);
+    }
+  };
+
+  // 비교 목록 초기화
+  const clearCompare = () => {
+    setCompareList([]);
+    setShowCompareModal(false);
+  };
+
+  // 북마크 로드
+  const loadBookmarks = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('bookmarkedAnnouncements') || '[]');
+      setBookmarks(saved);
+    } catch (error) {
+      console.error('북마크 로드 실패:', error);
+    }
+  };
+
+  // 북마크 토글
+  const toggleBookmark = (announcementId: string) => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('bookmarkedAnnouncements') || '[]');
+
+      let updated: string[];
+      if (saved.includes(announcementId)) {
+        // 이미 북마크되어 있으면 제거
+        updated = saved.filter((id: string) => id !== announcementId);
+      } else {
+        // 없으면 추가
+        updated = [...saved, announcementId];
+      }
+
+      localStorage.setItem('bookmarkedAnnouncements', JSON.stringify(updated));
+      setBookmarks(updated);
+    } catch (error) {
+      console.error('북마크 토글 실패:', error);
+    }
+  };
+
+  // 북마크 여부 확인
+  const isBookmarked = (announcementId: string) => {
+    return bookmarks.includes(announcementId);
+  };
+
+  // 사용자 잔액 로드
+  const loadUserBalance = () => {
+    try {
+      const balance = localStorage.getItem('userBalance');
+      setUserBalance(balance ? parseInt(balance) : 0);
+    } catch (error) {
+      console.error('잔액 로드 실패:', error);
+    }
+  };
+
+  // 사용자 정보 로드
+  const loadUserInfo = async () => {
+    try {
+      const response = await fetch('/api/user');
+      const data = await response.json();
+
+      if (data.user && data.user.user_metadata) {
+        const fullName = data.user.user_metadata.full_name || data.user.user_metadata.name;
+
+        if (fullName) {
+          // 이름 마스킹 (예: "홍길동" → "홍OO")
+          const maskedName = fullName.charAt(0) + 'OO';
+          setUserName(maskedName);
+        } else {
+          setUserName('사용자');
+        }
+      }
+    } catch (error) {
+      console.error('사용자 정보 로드 실패:', error);
+      setUserName('사용자');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Compact Header */}
+      <header className="bg-gradient-to-r from-orange-500 to-red-500 text-white">
+        <div className="container mx-auto px-6 py-3">
+          <div className="flex items-center justify-between">
+            {/* Left: Logo and Title */}
+            <div>
+              <h1 className="text-2xl font-bold mb-0.5">로튼</h1>
+              <p className="text-sm text-white/90">정부지원 도전 - 신청서나 사업계획서 초안을 AI가 도와드립니다</p>
+            </div>
+
+            {/* Right: User controls */}
+            <div className="flex items-center gap-2">
+              {/* 크레딧 표시 */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-white/20 backdrop-blur-sm rounded-lg">
+                <span className="text-xs text-white/90">보유 크레딧</span>
+                <span className="text-sm font-bold text-white">{userBalance.toLocaleString()}원</span>
+              </div>
+
+              {/* 충전하기 */}
+              <Button
+                onClick={() => router.push('/charge')}
+                size="sm"
+                className="bg-green-500 text-white hover:bg-green-600 h-8"
+              >
+                💳 충전하기
+              </Button>
+
+              {/* 사용자 정보 */}
+              <Button
+                onClick={() => router.push('/mypage')}
+                size="sm"
+                variant="outline"
+                className="border-white/40 text-white hover:bg-white/20 h-8"
+              >
+                👤 {userName}님
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Layout: Sidebar + Content */}
+      <div className="container mx-auto px-6 py-6 flex gap-6">
+        {/* Left Sidebar - Filters */}
+        <aside className="w-64 flex-shrink-0">
+          <Card className="sticky top-6">
+            <CardHeader>
+              <CardTitle className="text-lg">조건검색</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* AI 검색 토글 */}
+              <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+                <input
+                  type="checkbox"
+                  id="ai-search"
+                  checked={useAISearch}
+                  onChange={(e) => setUseAISearch(e.target.checked)}
+                  className="w-4 h-4 accent-purple-600 flex-shrink-0"
+                />
+                <label htmlFor="ai-search" className="text-sm font-medium text-purple-900 cursor-pointer flex items-center gap-1.5">
+                  <span>✨</span>
+                  <span>AI 검색</span>
+                </label>
+              </div>
+
+              {/* 맞춤 공고 알림 설정 버튼 */}
+              <Button
+                onClick={() => {
+                  const keywords = prompt(
+                    '관심있는 키워드를 입력해주세요 (쉼표로 구분)\n\n' +
+                    '예시: 청년창업, 중소기업, 기술개발\n\n' +
+                    '입력하신 키워드와 관련된 새 공고가 등록되면\n' +
+                    '이메일로 알림을 보내드립니다.'
+                  );
+
+                  if (keywords && keywords.trim()) {
+                    const email = localStorage.getItem('userEmail') || prompt('알림받을 이메일 주소를 입력해주세요:');
+
+                    if (email && email.includes('@')) {
+                      const keywordList = keywords.split(',').map(k => k.trim()).filter(k => k);
+
+                      // localStorage에 저장
+                      localStorage.setItem('userEmail', email);
+                      localStorage.setItem('customAlertKeywords', JSON.stringify(keywordList));
+
+                      alert(
+                        `✅ 맞춤 공고 알림이 설정되었습니다!\n\n` +
+                        `키워드: ${keywordList.join(', ')}\n` +
+                        `알림: ${email}\n\n` +
+                        `새로운 공고가 등록되면 즉시 알려드립니다.`
+                      );
+                    } else if (email) {
+                      alert('올바른 이메일 주소를 입력해주세요.');
+                    }
+                  }
+                }}
+                variant="outline"
+                className="w-full border-2 border-dashed border-orange-300 hover:bg-orange-50"
+              >
+                🔔 알림 설정
+              </Button>
+
+              {/* 검색어 입력 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  키워드
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400 z-10" />
+                  <Input
+                    type="text"
+                    placeholder="검색어 입력 (2글자 이상)"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchInput(e.target.value)}
+                    onKeyDown={handleKeyPress}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                    onFocus={() => {
+                      if (suggestions.length > 0) {
+                        setShowSuggestions(true);
+                      }
+                    }}
+                    className="pl-10"
+                  />
+
+                  {/* 자동완성 드롭다운 */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      {suggestions.map((suggestion, index) => (
+                        <div
+                          key={index}
+                          onClick={() => handleSuggestionClick(suggestion)}
+                          className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                        >
+                          {suggestion}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 지원분야 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  지원분야
+                </label>
+                <select
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  value={filters.category || ''}
+                  onChange={(e) => setFilters({ ...filters, category: e.target.value || undefined })}
+                >
+                  <option value="">전체</option>
+                  {filterOptions.categories.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 지역 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  지역
+                </label>
+                <select
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  value={filters.region || ''}
+                  onChange={(e) => setFilters({ ...filters, region: e.target.value || undefined })}
+                >
+                  <option value="">전체</option>
+                  {filterOptions.regions.map((region) => (
+                    <option key={region} value={region}>{region}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 대상 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  대상
+                </label>
+                <select
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  value={filters.target || ''}
+                  onChange={(e) => setFilters({ ...filters, target: e.target.value || undefined })}
+                >
+                  <option value="">전체</option>
+                  {filterOptions.targets.map((target) => (
+                    <option key={target} value={target}>{target}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 연령 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  연령
+                </label>
+                <select
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  value={filters.age || ''}
+                  onChange={(e) => setFilters({ ...filters, age: e.target.value || undefined })}
+                >
+                  <option value="">전체</option>
+                  {filterOptions.ages.map((age) => (
+                    <option key={age} value={age}>{age}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 창업업력 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  창업업력
+                </label>
+                <select
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  value={filters.businessYear || ''}
+                  onChange={(e) => setFilters({ ...filters, businessYear: e.target.value || undefined })}
+                >
+                  <option value="">전체</option>
+                  {filterOptions.business_years.map((year) => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 상태 */}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  상태
+                </label>
+                <div className="space-y-2">
+                  <Button
+                    variant={filters.status === 'all' ? 'default' : 'outline'}
+                    onClick={() => setFilters({ ...filters, status: 'all' })}
+                    className="w-full justify-start text-sm"
+                  >
+                    전체
+                  </Button>
+                  <Button
+                    variant={filters.status === 'ongoing' ? 'default' : 'outline'}
+                    onClick={() => setFilters({ ...filters, status: 'ongoing' })}
+                    className="w-full justify-start text-sm"
+                  >
+                    진행중
+                  </Button>
+                  <Button
+                    variant={filters.status === 'deadline' ? 'default' : 'outline'}
+                    onClick={() => setFilters({ ...filters, status: 'deadline' })}
+                    className="w-full justify-start text-sm"
+                  >
+                    마감임박
+                  </Button>
+                </div>
+              </div>
+
+              {/* 검색 버튼 */}
+              <Button
+                onClick={useAISearch ? handleSemanticSearch : handleSearch}
+                disabled={loading}
+                className="w-full"
+              >
+                {loading ? '검색 중...' : useAISearch ? '✨ AI 검색' : '🔍 검색'}
+              </Button>
+            </CardContent>
+          </Card>
+
+        </aside>
+
+        {/* Center Content - Results */}
+        <main className="flex-1">
+          {/* 결과 헤더 + 정렬 */}
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              {searchQuery ? (
+                <p className="text-gray-600">
+                  <span className="font-semibold text-gray-900">&quot;{searchQuery}&quot;</span> 검색 결과:{' '}
+                  <span className="font-semibold text-orange-500">{totalResults.toLocaleString()}</span>건
+                </p>
+              ) : (
+                <p className="font-semibold text-gray-900 text-lg">최근 공고</p>
+              )}
+            </div>
+
+            {/* 정렬 옵션 */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600">정렬:</label>
+              <select
+                className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+                value={filters.sort || 'newest'}
+                onChange={(e) => setFilters({ ...filters, sort: e.target.value as any })}
+              >
+                <option value="newest">최신순</option>
+                <option value="deadline">마감임박순</option>
+                {useAISearch && <option value="relevance">관련도순</option>}
+              </select>
+            </div>
+          </div>
+
+          {/* 에러 메시지 표시 */}
+          {error && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <span className="text-red-600 text-lg">⚠️</span>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-red-800 mb-1">검색 오류</p>
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+                <button
+                  onClick={() => setError(null)}
+                  className="text-red-600 hover:text-red-800 text-lg leading-none"
+                  aria-label="닫기"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+
+
+          {/* 검색 결과 리스트 */}
+          <div className="space-y-3">
+            {announcements.map((announcement) => (
+              <Card
+                key={announcement.id}
+                className="hover:shadow-md transition-shadow"
+              >
+                  <CardContent className="p-4">
+                    {/* 상단 메타정보: 카테고리 | 지역 | 금액 정보 */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        {/* 카테고리 배지 (색상별) */}
+                        {announcement.category && (
+                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getCategoryColor(announcement.category)}`}>
+                            {announcement.category}
+                          </span>
+                        )}
+
+                        {/* 지역 | 금액 정보 */}
+                        <div className="flex items-center gap-1.5 text-sm text-gray-500">
+                          <span>{announcement.organization?.split(' ')[0] || '전국'}</span>
+                          <span>|</span>
+                          <span>금액 미정</span>
+                        </div>
+                      </div>
+
+                      {/* 우측 상태 배지 */}
+                      <div className="flex gap-2">
+                        {announcement.relevance && (
+                          <Badge variant="outline" className="border-purple-500 text-purple-700 text-xs">
+                            🤖 {Math.round(announcement.relevance * 100)}%
+                          </Badge>
+                        )}
+                        {announcement.status === 'deadline' && (
+                          <Badge variant="destructive" className="bg-red-500">N</Badge>
+                        )}
+                        {announcement.status === 'ongoing' && (
+                          <Badge variant="outline" className="border-blue-500 text-blue-700">
+                            D-{calculateDday(announcement.end_date)}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 제목 */}
+                    <h3
+                      className="text-lg font-bold text-gray-900 mb-2 hover:text-orange-500 cursor-pointer line-clamp-2"
+                      onClick={() => handleAnnouncementClick(announcement)}
+                    >
+                      {announcement.title}
+                    </h3>
+
+                    {/* 간단요약 - 더 예쁘게 표시 */}
+                    {announcement.simple_summary && (
+                      <div className="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                        <p className="text-sm text-gray-700 line-clamp-2 leading-relaxed">
+                          {announcement.simple_summary}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 상세페이지 URL 링크 */}
+                    <div className="mb-2">
+                      <a
+                        href={`/announcement/${announcement.id}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleAnnouncementClick(announcement);
+                        }}
+                        className="text-xs text-orange-500 hover:text-orange-600 hover:underline flex items-center gap-1"
+                      >
+                        <span>🔗</span>
+                        <span>/announcement/{announcement.id}</span>
+                      </a>
+                    </div>
+
+                    {/* 하단 메타정보 */}
+                    <div className="pt-3 border-t flex items-center justify-between">
+                      <div className="text-xs text-gray-500">
+                        {announcement.organization?.split(' ')[0] || announcement.organization} • 마감 {announcement.end_date}
+                      </div>
+
+                      {/* 액션 버튼 그룹 */}
+                      <div className="flex gap-1">
+                        {/* 북마크 버튼 */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleBookmark(announcement.id);
+                          }}
+                          className="h-8 px-3 text-xs hover:bg-orange-50"
+                        >
+                          {isBookmarked(announcement.id) ? '⭐' : '☆'}
+                        </Button>
+
+                        {/* 비교 추가 버튼 */}
+                        <Button
+                          variant={compareList.find(item => item.id === announcement.id) ? "default" : "ghost"}
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCompare(announcement);
+                          }}
+                          className="h-8 px-3 text-xs"
+                        >
+                          {compareList.find(item => item.id === announcement.id) ? '✓' : '+'}
+                        </Button>
+
+                        {/* 상세보기 버튼 */}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAnnouncementClick(announcement);
+                          }}
+                          className="h-8 px-3 text-xs border-orange-300 text-orange-600 hover:bg-orange-50"
+                        >
+                          상세보기
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+            ))}
+          </div>
+
+          {/* 로딩 상태 - Skeleton UI */}
+          {loading && (
+            <div className="space-y-3">
+              {[...Array(5)].map((_, i) => (
+                <Card key={i} className="animate-pulse">
+                  <CardContent className="p-4">
+                    {/* 상단 배지 스켈레톤 */}
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex gap-2">
+                        <div className="h-6 w-20 bg-gray-200 rounded-full"></div>
+                      </div>
+                      <div className="h-6 w-12 bg-gray-200 rounded-full"></div>
+                    </div>
+
+                    {/* 제목 스켈레톤 */}
+                    <div className="h-6 bg-gray-200 rounded w-3/4 mb-3"></div>
+
+                    {/* 요약 스켈레톤 */}
+                    <div className="space-y-2 mb-3">
+                      <div className="h-4 bg-gray-200 rounded w-full"></div>
+                      <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+                    </div>
+
+                    {/* 메타정보 스켈레톤 */}
+                    <div className="pt-3 border-t">
+                      <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* 페이지네이션 */}
+          {!loading && announcements.length > 0 && totalResults > PAGE_SIZE && (
+            <div className="mt-6 flex items-center justify-center gap-2">
+              {/* 이전 페이지 */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="px-3"
+              >
+                ← 이전
+              </Button>
+
+              {/* 페이지 번호 */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, Math.ceil(totalResults / PAGE_SIZE)) }, (_, i) => {
+                  const totalPages = Math.ceil(totalResults / PAGE_SIZE);
+                  let pageNum;
+
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      className="w-10"
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+
+              {/* 다음 페이지 */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage >= Math.ceil(totalResults / PAGE_SIZE)}
+                className="px-3"
+              >
+                다음 →
+              </Button>
+
+              {/* 페이지 정보 */}
+              <span className="text-sm text-gray-500 ml-4">
+                {currentPage} / {Math.ceil(totalResults / PAGE_SIZE)} 페이지
+              </span>
+            </div>
+          )}
+
+          {/* 결과 없음 */}
+          {!loading && announcements.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-500">검색 결과가 없습니다.</p>
+            </div>
+          )}
+        </main>
+
+        {/* Right Sidebar - Recent Views */}
+        {recentViews.length > 0 && (
+          <aside className="w-64 flex-shrink-0">
+            <Card className="sticky top-6">
+              <CardHeader>
+                <CardTitle className="text-lg">최근 본 공고</CardTitle>
+                <CardDescription className="text-xs">최대 10개까지 저장됩니다</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {recentViews.slice(0, 5).map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-2 hover:bg-gray-50 rounded cursor-pointer border border-gray-200"
+                    onClick={() => router.push(`/announcement/${item.id}`)}
+                  >
+                    <p className="text-sm font-medium text-gray-900 line-clamp-2 mb-1">
+                      {item.title}
+                    </p>
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <span>{item.organization}</span>
+                      <span className="text-orange-500">
+                        D-{calculateDday(item.end_date)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {recentViews.length > 5 && (
+                  <button
+                    className="text-xs text-gray-500 hover:text-gray-700 w-full text-center pt-2"
+                    onClick={() => {
+                      alert(`총 ${recentViews.length}개의 최근 본 공고가 있습니다.`);
+                    }}
+                  >
+                    + {recentViews.length - 5}개 더보기
+                  </button>
+                )}
+              </CardContent>
+            </Card>
+          </aside>
+        )}
+      </div>
+
+      {/* 비교 모달 */}
+      {showCompareModal && compareList.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-6">
+          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b sticky top-0 bg-white">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-gray-900">공고 비교</h2>
+                <div className="flex gap-2">
+                  <Button onClick={clearCompare} variant="outline">
+                    초기화
+                  </Button>
+                  <Button onClick={() => setShowCompareModal(false)} variant="ghost">
+                    ✕
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {compareList.map((announcement, index) => (
+                  <Card key={announcement.id} className="border-2 border-orange-300">
+                    <CardHeader>
+                      <div className="flex items-start justify-between mb-2">
+                        <Badge variant="default">공고 {index + 1}</Badge>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleCompare(announcement)}
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                      <CardTitle className="text-lg">{announcement.title}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 mb-1">기관</p>
+                        <p className="text-sm text-gray-600">{announcement.organization}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 mb-1">접수기간</p>
+                        <p className="text-sm text-gray-600">
+                          {announcement.start_date} ~ {announcement.end_date}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 mb-1">D-Day</p>
+                        <Badge variant={announcement.status === 'deadline' ? 'destructive' : 'outline'}>
+                          {announcement.status === 'deadline' ? 'N' : `D-${calculateDday(announcement.end_date)}`}
+                        </Badge>
+                      </div>
+                      {announcement.simple_summary && (
+                        <div>
+                          <p className="text-sm font-medium text-gray-700 mb-1">요약</p>
+                          <p className="text-sm text-gray-600 line-clamp-3">
+                            {announcement.simple_summary}
+                          </p>
+                        </div>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAnnouncementClick(announcement)}
+                        className="w-full mt-2"
+                      >
+                        상세보기
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {compareList.length < MAX_COMPARE && (
+                <div className="mt-4 p-4 bg-gray-100 rounded-lg text-center">
+                  <p className="text-sm text-gray-600">
+                    최대 {MAX_COMPARE}개까지 비교할 수 있습니다. (현재 {compareList.length}개)
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,16 @@
+# Vercel Access Token
+# 생성일: 2025-11-10
+# 용도: Claude Code 자동 배포 설정
+# Scope: Full Account
+# 계정: oby5002-1059 (oby500s-projects)
+
+VERCEL_TOKEN=MR5MaWxk9TsLZkvRGEI5kVUe
+
+# 사용법:
+# export VERCEL_TOKEN="MR5MaWxk9TsLZkvRGEI5kVUe"
+# vercel --token $VERCEL_TOKEN [command]
+
+# 보안:
+# - 이 파일은 절대 Git에 커밋하지 마세요
+# - .gitignore에 .vercel-token 추가됨
+# - Token은 Vercel Dashboard에서 언제든지 재생성 가능

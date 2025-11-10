@@ -1,0 +1,62 @@
+# ================================================
+# .dockerignore - FastAPI Backend
+# ================================================
+# Docker 이미지 빌드 시 제외할 파일 및 디렉토리
+# ================================================
+
+# Python 관련
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 가상 환경
+venv/
+env/
+ENV/
+.venv/
+
+# IDE 관련
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 환경 설정
+.env
+.env.local
+.env.*.local
+
+# 테스트 및 커버리지
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# 로그 파일
+*.log
+logs/
+
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# 문서
+README.md
+*.md
+docs/
+
+# 기타
+.dockerignore
+Dockerfile
+docker-compose*.yml
