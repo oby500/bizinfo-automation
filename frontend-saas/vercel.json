@@ -6,22 +6,6 @@
   "framework": "nextjs",
   "outputDirectory": ".next",
   "regions": ["icn1"],
-  "env": {
-    "POSTGRES_URL": "@postgres_url",
-    "AUTH_SECRET": "@auth_secret",
-    "BASE_URL": "@base_url",
-    "NEXT_PUBLIC_SUPABASE_URL": "@next_public_supabase_url",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@next_public_supabase_anon_key",
-    "NEXT_PUBLIC_PORTONE_STORE_ID": "@next_public_portone_store_id",
-    "PORTONE_API_SECRET": "@portone_api_secret",
-    "NEXT_PUBLIC_GOOGLE_CLIENT_ID": "@next_public_google_client_id",
-    "NEXT_PUBLIC_GOOGLE_CLIENT_SECRET": "@next_public_google_client_secret",
-    "NEXT_PUBLIC_KAKAO_CLIENT_ID": "@next_public_kakao_client_id",
-    "NEXT_PUBLIC_KAKAO_CLIENT_SECRET": "@next_public_kakao_client_secret",
-    "NEXT_PUBLIC_NAVER_CLIENT_ID": "@next_public_naver_client_id",
-    "NEXT_PUBLIC_NAVER_CLIENT_SECRET": "@next_public_naver_client_secret",
-    "NEXT_PUBLIC_API_URL": "@next_public_api_url"
-  },
   "headers": [
     {
       "source": "/api/(.*)",
