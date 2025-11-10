@@ -221,7 +221,7 @@ export default function MyPage() {
             <div className="grid grid-cols-4 gap-4 text-center">
               <div className="p-4 bg-gradient-to-br from-orange-400 to-orange-600 text-white rounded-lg shadow-lg">
                 <Coins className="w-6 h-6 mx-auto mb-2" />
-                <div className="text-3xl font-bold">{user?.points?.toLocaleString() || '0'}</div>
+                <div className="text-3xl font-bold">0</div>
                 <div className="text-sm mt-1 opacity-90">보유 포인트</div>
               </div>
               <div className="p-4 bg-orange-50 rounded-lg border border-orange-100">
