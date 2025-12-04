@@ -1,39 +1,40 @@
 import { desc, and, eq, isNull } from 'drizzle-orm';
 import { db } from './drizzle';
-import { activityLogs, teamMembers, teams, users } from './schema';
-import { cookies } from 'next/headers';
-import { verifyToken } from '@/lib/auth/session';
+import {
+  activityLogs,
+  teamMembers,
+  teams,
+  users,
+  generatedApplications,
+  applicationSessions,
+  type NewGeneratedApplication,
+  type NewApplicationSession
+} from './schema';
+import { auth } from '@/auth';
 
 export async function getUser() {
-  const sessionCookie = (await cookies()).get('session');
-  if (!sessionCookie || !sessionCookie.value) {
+  const session = await auth();
+
+  if (!session?.user?.email) {
     return null;
   }
 
-  const sessionData = await verifyToken(sessionCookie.value);
-  if (
-    !sessionData ||
-    !sessionData.user ||
-    typeof sessionData.user.id !== 'number'
-  ) {
-    return null;
-  }
+  // DB에서 사용자 조회 (필요한 컬럼만 선택)
+  const [user] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt,
+      deletedAt: users.deletedAt
+    })
+    .from(users)
+    .where(eq(users.email, session.user.email))
+    .limit(1);
 
-  if (new Date(sessionData.expires) < new Date()) {
-    return null;
-  }
-
-  // 임시: DB 연결 없이 세션 데이터만 사용 (빠른 응답)
-  // TODO: DB 연결 수정 후 원래 코드로 복구 필요
-  return {
-    id: sessionData.user.id,
-    email: `kakao_${sessionData.user.id}@kakao.oauth`,
-    name: 'Kakao User',
-    role: 'member',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    deletedAt: null,
-  } as any;
+  return user || null;
 }
 
 export async function getTeamByStripeCustomerId(customerId: string) {
@@ -127,4 +128,177 @@ export async function getTeamForUser() {
   });
 
   return result?.team || null;
+}
+
+// ==================== 신청서 생성 관련 쿼리 ====================
+
+/**
+ * 신청서 생성 세션 저장
+ */
+export async function createApplicationSession(
+  data: NewApplicationSession
+): Promise<{ id: number }> {
+  const [result] = await db
+    .insert(applicationSessions)
+    .values(data)
+    .returning({ id: applicationSessions.id });
+  return result;
+}
+
+/**
+ * 생성된 신청서 저장
+ */
+export async function saveGeneratedApplication(
+  data: NewGeneratedApplication
+): Promise<{ id: number }> {
+  const [result] = await db
+    .insert(generatedApplications)
+    .values(data)
+    .returning({ id: generatedApplications.id });
+  return result;
+}
+
+/**
+ * 여러 신청서 일괄 저장
+ */
+export async function saveGeneratedApplicationsBatch(
+  applications: NewGeneratedApplication[]
+): Promise<{ ids: number[] }> {
+  const results = await db
+    .insert(generatedApplications)
+    .values(applications)
+    .returning({ id: generatedApplications.id });
+  return { ids: results.map(r => r.id) };
+}
+
+/**
+ * 사용자의 생성된 신청서 목록 조회
+ */
+export async function getUserGeneratedApplications(
+  userId: number,
+  limit: number = 50
+) {
+  return await db
+    .select()
+    .from(generatedApplications)
+    .where(eq(generatedApplications.userId, userId))
+    .orderBy(desc(generatedApplications.createdAt))
+    .limit(limit);
+}
+
+/**
+ * 특정 공고에 대한 사용자의 생성된 신청서 조회
+ */
+export async function getUserApplicationsForAnnouncement(
+  userId: number,
+  announcementId: string,
+  announcementSource: string
+) {
+  return await db
+    .select()
+    .from(generatedApplications)
+    .where(
+      and(
+        eq(generatedApplications.userId, userId),
+        eq(generatedApplications.announcementId, announcementId),
+        eq(generatedApplications.announcementSource, announcementSource)
+      )
+    )
+    .orderBy(desc(generatedApplications.createdAt));
+}
+
+/**
+ * 신청서 ID로 조회
+ */
+export async function getGeneratedApplicationById(id: number) {
+  const [result] = await db
+    .select()
+    .from(generatedApplications)
+    .where(eq(generatedApplications.id, id))
+    .limit(1);
+  return result || null;
+}
+
+/**
+ * 신청서 상태 업데이트
+ */
+export async function updateApplicationStatus(
+  id: number,
+  status: string
+) {
+  await db
+    .update(generatedApplications)
+    .set({
+      status,
+      updatedAt: new Date()
+    })
+    .where(eq(generatedApplications.id, id));
+}
+
+/**
+ * 신청서 사용자 피드백 업데이트
+ */
+export async function updateApplicationFeedback(
+  id: number,
+  feedback: { rating?: number; feedback?: string }
+) {
+  await db
+    .update(generatedApplications)
+    .set({
+      userRating: feedback.rating,
+      userFeedback: feedback.feedback,
+      updatedAt: new Date()
+    })
+    .where(eq(generatedApplications.id, id));
+}
+
+/**
+ * 사용자의 생성 세션 목록 조회
+ */
+export async function getUserApplicationSessions(
+  userId: number,
+  limit: number = 20
+) {
+  return await db
+    .select()
+    .from(applicationSessions)
+    .where(eq(applicationSessions.userId, userId))
+    .orderBy(desc(applicationSessions.createdAt))
+    .limit(limit);
+}
+
+/**
+ * 세션 ID로 세션 및 관련 신청서 조회
+ */
+export async function getApplicationSessionWithApplications(
+  sessionId: number,
+  userId: number
+) {
+  const [session] = await db
+    .select()
+    .from(applicationSessions)
+    .where(
+      and(
+        eq(applicationSessions.id, sessionId),
+        eq(applicationSessions.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (!session) return null;
+
+  // 해당 세션의 신청서들 조회 (announcementId로 연결)
+  const applications = await db
+    .select()
+    .from(generatedApplications)
+    .where(
+      and(
+        eq(generatedApplications.userId, userId),
+        eq(generatedApplications.announcementId, session.announcementId),
+        eq(generatedApplications.announcementSource, session.announcementSource)
+      )
+    )
+    .orderBy(generatedApplications.styleRank);
+
+  return { session, applications };
 }

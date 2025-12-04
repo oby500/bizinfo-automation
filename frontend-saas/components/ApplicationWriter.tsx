@@ -1,255 +1,544 @@
 'use client'
 
 /**
- * ApplicationWriter 컴포넌트
+ * ApplicationWriter 컴포넌트 - 완전히 재작성
  *
- * AI 신청서 자동 작성 메인 컴포넌트
- * - 공고 분석 (Claude Sonnet 4.5)
- * - 회사 정보 입력 (Z)
- * - 티어 선택 (Basic/Standard/Premium)
- * - 신청서 생성 (GPT-4o)
- * - 진행률 표시 및 다운로드
+ * 올바른 플로우:
+ * 1. 티어 선택
+ * 2. 크레딧 결제
+ * 3. Writing Analysis API 호출
+ * 4. TaskSelectionChatbot 표시
+ * 5. 과제 선택
+ * 6. 회사 정보 입력
+ * 7. 신청서 생성
  */
 
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, CheckCircle2, AlertCircle, Download } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, CreditCard } from 'lucide-react'
+import { TaskSelectionChatbot } from '@/components/TaskSelectionChatbot'
+import { ProfileCollectionChatbot } from '@/components/ProfileCollectionChatbot'
+import { ApplicationFeedbackChatbot } from '@/components/ApplicationFeedbackChatbot'
+import { StyleResultsTabs, type ApplicationResult } from '@/components/StyleResultsTabs'
 
 interface ApplicationWriterProps {
   announcementId: string
   announcementSource: 'kstartup' | 'bizinfo'
+  announcementTitle: string
+  testMode?: boolean  // 테스트 모드 - 인증 우회
 }
 
-type Step = 'analyze' | 'company-info' | 'tier-select' | 'generating' | 'completed'
+type Step =
+  | 'tier-select'
+  | 'payment-processing'
+  | 'writing-analysis-loading'
+  | 'task-selection'
+  | 'company-info'
+  | 'generating'
+  | 'feedback'     // 피드백 & 수정 단계
+  | 'completed'
 
-interface AnalysisResult {
-  analysis_id: string
-  analysis: {
-    자격요건: any[]
-    평가기준: any[]
-    심사위원_프로파일: any
-    핵심키워드: any
-    경쟁강도: any
-    작성전략: any
-    _metadata: {
-      cost_usd: number
-      cost_krw: number
-    }
+type Tier = 'basic' | 'standard' | 'premium'
+
+interface WritingAnalysis {
+  tasks?: Array<{
+    task_number: number
+    task_name: string
+    description: string
+    required_info: string[]
+    evaluation_points: string[]
+  }>
+  common_required_info: string[]
+  has_multiple_tasks: boolean
+  recommended_task?: number
+  form_type?: 'simple_registration' | 'evaluation_based' | 'business_plan'
+}
+
+// 양식 유형별 티어 추천 정보
+const TIER_RECOMMENDATIONS: Record<string, {
+  recommendedTier: Tier
+  aiValue: 'low' | 'medium' | 'high'
+  message: string
+  description: string
+}> = {
+  simple_registration: {
+    recommendedTier: 'basic',
+    aiValue: 'low',
+    message: '💡 단순 등록 양식입니다',
+    description: '이 공고는 수강/참가 신청서 같은 단순 등록 양식입니다. 복잡한 평가 심사가 없어 Basic 티어로 충분합니다.'
+  },
+  evaluation_based: {
+    recommendedTier: 'standard',
+    aiValue: 'high',
+    message: '🎯 평가 심사가 있는 공고입니다',
+    description: '배점 기준과 평가 항목이 있어 AI가 전략적 작성을 도와드릴 수 있습니다. Standard 이상을 추천드립니다.'
+  },
+  business_plan: {
+    recommendedTier: 'premium',
+    aiValue: 'high',
+    message: '📊 사업계획서 제출이 필요합니다',
+    description: '복잡한 사업계획서 구조화가 필요합니다. Premium 티어의 심층 AI 분석이 효과적입니다.'
   }
 }
 
-interface CompanyAnalysis {
-  analysis_id: string
-  company_analysis: {
-    강점분석: any[]
-    약점분석: any[]
-    차별화포인트: any[]
-    리스크체크: any
-    최종전략: any
-    _metadata: {
-      cost_usd: number
-      cost_krw: number
-    }
-  }
-}
-
-export function ApplicationWriter({ announcementId, announcementSource }: ApplicationWriterProps) {
-  const [step, setStep] = useState<Step>('analyze')
+export function ApplicationWriter({
+  announcementId,
+  announcementSource,
+  announcementTitle,
+  testMode = false,
+}: ApplicationWriterProps) {
+  const [step, setStep] = useState<Step>('tier-select')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // 공고 분석 결과
-  const [announcementAnalysis, setAnnouncementAnalysis] = useState<AnalysisResult | null>(null)
+  // 티어 선택
+  const [selectedTier, setSelectedTier] = useState<Tier>('basic')
 
-  // 회사 분석 결과
-  const [companyAnalysis, setCompanyAnalysis] = useState<CompanyAnalysis | null>(null)
+  // 크레딧 잔액
+  const [creditBalance, setCreditBalance] = useState<number>(0)
 
-  // 회사 정보 (Z)
+  // Writing Analysis 결과
+  const [writingAnalysis, setWritingAnalysis] = useState<WritingAnalysis | null>(null)
+
+  // 선택한 과제
+  const [selectedTask, setSelectedTask] = useState<number | null>(null)
+
+  // 회사 정보
   const [companyInfo, setCompanyInfo] = useState<any>(null)
 
-  // 선택한 티어
-  const [selectedTier, setSelectedTier] = useState<'basic' | 'standard' | 'premium'>('basic')
+  // 생성된 신청서 배열 (스타일별)
+  const [applications, setApplications] = useState<ApplicationResult[]>([])
 
-  // 신청서 생성 ID
-  const [applicationId, setApplicationId] = useState<string | null>(null)
+  // 선택된 스타일
+  const [selectedStyle, setSelectedStyle] = useState<string>('story')
 
-  // 생성 진행률
-  const [progress, setProgress] = useState(0)
-  const [currentStepText, setCurrentStepText] = useState('')
+  // 티어별 수정권
+  const getTierRevisions = (tier: Tier): number => {
+    const revisions = { basic: 1, standard: 3, premium: 7 }
+    return revisions[tier]
+  }
 
-  // 생성 완료된 문서들
-  const [documents, setDocuments] = useState<any[]>([])
+  // 양식 유형 (티어 추천용)
+  const [formType, setFormType] = useState<'simple_registration' | 'evaluation_based' | 'business_plan' | null>(null)
+  const [formTypeLoading, setFormTypeLoading] = useState(true)
+
+  // 개발 모드 (테스트용)
+  const DEV_MODE = process.env.NODE_ENV === 'development'
 
   /**
-   * Step 1: 공고 분석
+   * 컴포넌트 마운트 시 크레딧 잔액 조회 + 양식 유형 분석
    */
-  const analyzeAnnouncement = async () => {
-    setLoading(true)
-    setError(null)
+  useEffect(() => {
+    if (DEV_MODE) {
+      // 개발 모드: 충분한 크레딧 설정
+      setCreditBalance(1000000)
+      console.log('[ApplicationWriter] 개발 모드: 크레딧 1,000,000원 설정')
+    } else {
+      fetchCreditBalance()
+    }
 
+    // 양식 유형 분석 (티어 추천용)
+    fetchFormType()
+  }, [])
+
+  /**
+   * 양식 유형 분석 (빠른 분석, 캐시 활용)
+   */
+  const fetchFormType = async () => {
+    setFormTypeLoading(true)
     try {
-      const response = await fetch('/api/application/analyze', {
+      console.log('[ApplicationWriter] 양식 유형 분석 시작')
+      const response = await fetch('/api/writing-analysis/form-type', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           announcement_id: announcementId,
-        announcement_source: announcementSource,
-          source: 'kstartup', // or 'bizinfo'
-          force_refresh: false
-        })
+          source: announcementSource,
+        }),
       })
 
-      if (!response.ok) {
-        throw new Error('공고 분석에 실패했습니다.')
+      if (response.ok) {
+        const data = await response.json()
+        setFormType(data.form_type || 'evaluation_based')
+        console.log('[ApplicationWriter] 양식 유형:', data.form_type)
+      } else {
+        // 실패 시 기본값
+        setFormType('evaluation_based')
       }
-
-      const data: AnalysisResult = await response.json()
-      setAnnouncementAnalysis(data)
-      setStep('company-info')
-    } catch (err: any) {
-      setError(err.message || '공고 분석 중 오류가 발생했습니다.')
+    } catch (err) {
+      console.warn('[ApplicationWriter] 양식 유형 분석 실패, 기본값 사용')
+      setFormType('evaluation_based')
     } finally {
-      setLoading(false)
+      setFormTypeLoading(false)
     }
   }
 
   /**
-   * Step 2: 회사 분석 (회사 정보 입력 후)
+   * 크레딧 잔액 조회
    */
-  const analyzeCompany = async (companyData: any) => {
-    setLoading(true)
-    setError(null)
-
+  const fetchCreditBalance = async () => {
     try {
-      const response = await fetch('/api/application/analyze-company', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          announcement_analysis: announcementAnalysis?.analysis,
-          company_info: companyData
-        })
-      })
+      console.log('[ApplicationWriter] 크레딧 잔액 조회 시작')
+      const response = await fetch('/api/revision-credits/balance')
 
       if (!response.ok) {
-        throw new Error('회사 분석에 실패했습니다.')
-      }
-
-      const data: CompanyAnalysis = await response.json()
-      setCompanyAnalysis(data)
-      setCompanyInfo(companyData)
-      setStep('tier-select')
-    } catch (err: any) {
-      setError(err.message || '회사 분석 중 오류가 발생했습니다.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  /**
-   * Step 3: 신청서 생성
-   */
-  const generateApplication = async () => {
-    setLoading(true)
-    setError(null)
-
-    try {
-      // TODO: 실제 user_id는 세션에서 가져와야 함
-      const userId = 'test-user-id'
-
-      const response = await fetch('/api/application/compose', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          announcement_analysis: announcementAnalysis?.analysis,
-          company_analysis: companyAnalysis?.company_analysis,
-          style: 'balanced', // 기본 스타일 (티어에 따라 여러 개 생성됨)
-          tier: selectedTier,
-          user_id: userId
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error('신청서 생성에 실패했습니다.')
+        throw new Error('크레딧 잔액 조회 실패')
       }
 
       const data = await response.json()
-      setApplicationId(data.application_id)
-      setStep('generating')
-
-      // 폴링 시작
-      startPolling(data.application_id)
+      setCreditBalance(data.balance || 0)
+      console.log('[ApplicationWriter] 크레딧 잔액 조회 완료:', data.balance)
     } catch (err: any) {
-      setError(err.message || '신청서 생성 중 오류가 발생했습니다.')
+      console.error('[ApplicationWriter] 크레딧 잔액 조회 실패:', err)
+      // 에러 발생해도 진행 가능하도록 (잔액 0으로)
+      setCreditBalance(0)
+    }
+  }
+
+  /**
+   * 티어별 가격
+   */
+  const getTierPrice = (tier: Tier): number => {
+    const prices = {
+      basic: 4900,
+      standard: 8000,
+      premium: 15000,
+    }
+    return prices[tier]
+  }
+
+  /**
+   * 크레딧으로 결제
+   */
+  const handleCreditPayment = async () => {
+    const tierPrice = getTierPrice(selectedTier)
+
+    console.log('[ApplicationWriter] 버튼 클릭:', {
+      selectedTier,
+      tierPrice,
+      creditBalance,
+      willUseCredits: creditBalance >= tierPrice,
+      DEV_MODE,
+    })
+
+    if (creditBalance < tierPrice) {
+      setError(`크레딧이 부족합니다. (잔액: ${creditBalance}원, 필요: ${tierPrice}원)`)
+      return
+    }
+
+    console.log('[ApplicationWriter] 크레딧으로 결제 진행')
+    setError(null)
+    setLoading(true)
+    setStep('payment-processing')
+
+    try {
+      // DEV_MODE일 때는 크레딧 차감 API 우회
+      if (DEV_MODE) {
+        console.log('[ApplicationWriter] DEV_MODE: 크레딧 차감 API 우회')
+      } else {
+        // 크레딧 차감
+        const response = await fetch('/api/revision-credits/deduct', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            amount: tierPrice,
+            reason: `${selectedTier} tier application writer`,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error('크레딧 차감 실패')
+        }
+
+        console.log('[ApplicationWriter] 크레딧 차감 완료')
+      }
+
+      console.log('[ApplicationWriter] Writing Analysis 호출 시작')
+
+      // 결제 완료 → Writing Analysis 호출
+      await fetchWritingAnalysis()
+    } catch (err: any) {
+      console.error('[ApplicationWriter] 결제 오류:', err)
+      setError(err.message || '결제 중 오류가 발생했습니다.')
+      setStep('tier-select')
       setLoading(false)
     }
   }
 
   /**
-   * 진행 상태 폴링 (2초마다)
+   * Writing Analysis API 호출
    */
-  const startPolling = (appId: string) => {
-    const interval = setInterval(async () => {
-      try {
-        const response = await fetch(`/api/application/status/${appId}`)
+  const fetchWritingAnalysis = async () => {
+    setStep('writing-analysis-loading')
+    setError(null)
+
+    try {
+      console.log('[ApplicationWriter] Writing Analysis API 호출:', {
+        announcementId,
+        source: announcementSource,
+      })
+
+      const response = await fetch('/api/writing-analysis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          announcement_id: announcementId,
+          source: announcementSource,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Writing Analysis 호출 실패')
+      }
+
+      const data = await response.json()
+      console.log('[ApplicationWriter] Writing Analysis 완료:', data)
+
+      setWritingAnalysis(data.writing_analysis)
+      setStep('task-selection')
+      setLoading(false)
+    } catch (err: any) {
+      console.error('[ApplicationWriter] Writing Analysis 실패:', err)
+      setError(err.message || 'Writing Analysis 중 오류가 발생했습니다.')
+      setStep('tier-select')
+      setLoading(false)
+    }
+  }
+
+  /**
+   * 과제 선택 완료
+   */
+  const handleTaskSelected = (taskNumber: number | null, requiredInfo: string[]) => {
+    console.log('[ApplicationWriter] 과제 선택:', taskNumber)
+    setSelectedTask(taskNumber)
+    setStep('company-info') // 회사 정보 입력 단계로 전환
+  }
+
+  /**
+   * 티어별 생성할 스타일 목록
+   */
+  const getStylesForTier = (tier: Tier): string[] => {
+    const tierStyles: Record<Tier, string[]> = {
+      basic: ['story'],
+      standard: ['story', 'data', 'aggressive'],
+      premium: ['story', 'data', 'aggressive', 'balanced', 'strategic'],
+    }
+    return tierStyles[tier]
+  }
+
+  /**
+   * 회사 정보 입력 완료 → 신청서 생성 (다중 스타일)
+   */
+  const handleCompanyInfoSubmit = async (info: any) => {
+    console.log('[ApplicationWriter] 회사 정보 제출:', info)
+    setCompanyInfo(info)
+    setStep('generating')
+    setLoading(true)
+    setError(null)
+
+    try {
+      const styles = getStylesForTier(selectedTier)
+      console.log('[ApplicationWriter] 신청서 생성 시작 - 스타일:', styles)
+
+      const generatedApplications: ApplicationResult[] = []
+
+      // 각 스타일별로 신청서 생성
+      for (let i = 0; i < styles.length; i++) {
+        const style = styles[i]
+        console.log(`[ApplicationWriter] 스타일 ${i + 1}/${styles.length}: ${style}`)
+
+        const response = await fetch('/api/application-writer/compose', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            announcement_id: announcementId,
+            source: announcementSource,
+            task_number: selectedTask,
+            company_profile: info,
+            tier: selectedTier,
+            style: style,  // 스타일 지정
+            test_mode: testMode,
+          }),
+        })
 
         if (!response.ok) {
-          clearInterval(interval)
-          setError('진행 상태 확인에 실패했습니다.')
-          setLoading(false)
-          return
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.detail || `${style} 스타일 신청서 생성 실패`)
         }
 
         const data = await response.json()
-        setProgress(data.progress)
-        setCurrentStepText(data.current_step || '')
+        console.log(`[ApplicationWriter] ${style} 스타일 생성 완료`)
 
-        if (data.status === 'completed') {
-          clearInterval(interval)
-          setDocuments(data.documents)
-          setStep('completed')
-          setLoading(false)
-        } else if (data.status === 'failed') {
-          clearInterval(interval)
-          setError(data.error || '신청서 생성에 실패했습니다.')
-          setLoading(false)
+        // ApplicationResult 형식으로 변환
+        const content = data.application_content && data.application_content.sections?.length > 0
+          ? data.application_content
+          : {
+              sections: data.sections || [],
+              plain_text: data.plain_text || data.application_content?.plain_text || null,
+            }
+
+        // 글자 수 계산
+        let charCount = 0
+        if (content.sections) {
+          content.sections.forEach((section: any) => {
+            if (section.subsections) {
+              section.subsections.forEach((sub: any) => {
+                charCount += (sub.content || '').length
+              })
+            } else {
+              charCount += (section.content || '').length
+            }
+          })
         }
-      } catch (err: any) {
-        clearInterval(interval)
-        setError('진행 상태 확인 중 오류가 발생했습니다.')
-        setLoading(false)
+
+        generatedApplications.push({
+          style,
+          styleName: data.style_name || style,
+          styleType: ['balanced', 'strategic', 'trusted', 'expert'].includes(style) ? 'combination' : 'base',
+          styleRank: i + 1,
+          isRecommended: i === 0,  // 첫 번째 스타일을 추천으로 표시
+          content,
+          charCount,
+          sectionCount: content.sections?.length || 0,
+        })
       }
-    }, 2000) // 2초마다 폴링
+
+      console.log('[ApplicationWriter] 전체 신청서 생성 완료:', generatedApplications.length, '개')
+      setApplications(generatedApplications)
+      setSelectedStyle(generatedApplications[0]?.style || 'story')
+
+      // DB에 저장
+      await saveApplicationsToDb(generatedApplications)
+
+      // 피드백 단계로 이동
+      setStep('feedback')
+      setLoading(false)
+    } catch (err: any) {
+      console.error('[ApplicationWriter] 신청서 생성 오류:', err)
+      setError(err.message || '신청서 생성 중 오류가 발생했습니다.')
+      setStep('company-info')
+      setLoading(false)
+    }
   }
 
   /**
-   * 다운로드
+   * 생성된 신청서들을 DB에 저장
    */
-  const downloadApplication = async (format: 'docx' | 'pdf' | 'hwp' = 'docx') => {
-    if (!applicationId) return
-
+  const saveApplicationsToDb = async (apps: ApplicationResult[]) => {
     try {
-      const response = await fetch(`/api/application/download/${applicationId}?format=${format}`)
+      const applicationsToSave = apps.map(app => ({
+        announcementId,
+        announcementSource,
+        announcementTitle,
+        tier: selectedTier,
+        style: app.style,
+        styleName: app.styleName,
+        styleType: app.styleType,
+        styleRank: app.styleRank,
+        isRecommended: app.isRecommended,
+        content: app.content,
+        charCount: app.charCount,
+        sectionCount: app.sectionCount,
+      }))
+
+      const response = await fetch('/api/applications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ applications: applicationsToSave }),
+      })
 
       if (!response.ok) {
-        throw new Error('다운로드에 실패했습니다.')
+        console.warn('[ApplicationWriter] 신청서 DB 저장 실패:', await response.text())
+      } else {
+        const result = await response.json()
+        console.log('[ApplicationWriter] 신청서 DB 저장 완료:', result)
       }
+    } catch (err) {
+      console.warn('[ApplicationWriter] 신청서 DB 저장 중 오류:', err)
+      // 저장 실패해도 진행
+    }
+  }
 
-      const data = await response.json()
+  /**
+   * 피드백 수정 완료 시 콜백 - 특정 스타일의 신청서 업데이트
+   */
+  const handleRevisionComplete = (newContent: any) => {
+    console.log('[ApplicationWriter] 수정 완료:', newContent)
+    setApplications(prev =>
+      prev.map(app =>
+        app.style === selectedStyle
+          ? { ...app, content: newContent }
+          : app
+      )
+    )
+  }
 
-      // TODO: 실제 다운로드 URL로 리다이렉트
-      window.open(data.download_url, '_blank')
-    } catch (err: any) {
-      setError(err.message || '다운로드 중 오류가 발생했습니다.')
+  /**
+   * 스타일 선택 변경
+   */
+  const handleStyleSelect = (style: string) => {
+    console.log('[ApplicationWriter] 스타일 선택:', style)
+    setSelectedStyle(style)
+  }
+
+  /**
+   * 최종 완료
+   */
+  const handleFinalize = () => {
+    console.log('[ApplicationWriter] 최종 완료')
+    setStep('completed')
+  }
+
+  /**
+   * 현재 선택된 스타일의 신청서 가져오기
+   */
+  const getCurrentApplication = () => {
+    return applications.find(app => app.style === selectedStyle)
+  }
+
+  /**
+   * ApplicationResult의 content를 ApplicationFeedbackChatbot에서 요구하는 형식으로 변환
+   */
+  const convertToFeedbackContent = (appContent: ApplicationResult['content']) => {
+    // sections 변환: subsections가 있으면 각각을 섹션으로 펼침
+    const flatSections: Array<{ title: string; content: string }> = []
+
+    if (appContent.sections) {
+      appContent.sections.forEach(section => {
+        if (section.subsections && section.subsections.length > 0) {
+          // subsections를 개별 섹션으로 펼침
+          section.subsections.forEach(sub => {
+            flatSections.push({
+              title: `${section.title} - ${sub.title}`,
+              content: sub.content,
+            })
+          })
+        } else if (section.content) {
+          flatSections.push({
+            title: section.title,
+            content: section.content,
+          })
+        }
+      })
+    }
+
+    return {
+      sections: flatSections,
+      plain_text: appContent.plain_text,
     }
   }
 
@@ -260,7 +549,7 @@ export function ApplicationWriter({ announcementId, announcementSource }: Applic
           🤖 AI 신청서 자동 작성
         </CardTitle>
         <CardDescription>
-          Claude Sonnet 4.5 + GPT-4o로 전문가 수준의 신청서를 자동 작성합니다
+          {announcementTitle}
         </CardDescription>
       </CardHeader>
 
@@ -273,261 +562,318 @@ export function ApplicationWriter({ announcementId, announcementSource }: Applic
           </Alert>
         )}
 
-        {/* Step 1: 공고 분석 */}
-        {step === 'analyze' && (
+        {/* Step 1: 티어 선택 */}
+        {step === 'tier-select' && (
           <div className="space-y-4">
-            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <h3 className="font-semibold mb-2">📋 공고 정보</h3>
-              <p className="text-sm text-gray-700">{announcementId}</p>
-              <p className="text-sm text-gray-500 mt-1">
-                주관: {""} | 마감: {""}
-              </p>
-            </div>
-
-            <Button
-              onClick={analyzeAnnouncement}
-              disabled={loading}
-              className="w-full"
-              size="lg"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  공고 분석 중...
-                </>
-              ) : (
-                '1단계: 공고 분석 시작'
-              )}
-            </Button>
-
-            <p className="text-xs text-gray-500 text-center">
-              Claude Sonnet 4.5가 공고문을 상세 분석합니다 (약 10-20초 소요)
-            </p>
-          </div>
-        )}
-
-        {/* Step 2: 회사 정보 입력 */}
-        {step === 'company-info' && announcementAnalysis && (
-          <div className="space-y-4">
-            <Alert>
-              <CheckCircle2 className="h-4 w-4" />
-              <AlertDescription>
-                공고 분석 완료! 비용: ₩{announcementAnalysis.analysis._metadata.cost_krw}
-              </AlertDescription>
-            </Alert>
-
-            <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-              <h3 className="font-semibold mb-2">✅ 분석 완료</h3>
-              <div className="text-sm space-y-1">
-                <p>• 자격요건: {announcementAnalysis.analysis.자격요건.length}개 항목</p>
-                <p>• 평가기준: {announcementAnalysis.analysis.평가기준.length}개 항목</p>
-                <p>• 작성 전략 수립 완료</p>
+            {/* 로딩 중 */}
+            {formTypeLoading && (
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-2 text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">공고 유형 분석 중...</span>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* TODO: 실제 회사 정보 입력 폼 컴포넌트 */}
-            <div className="p-4 border rounded-lg">
-              <h3 className="font-semibold mb-4">2단계: 회사 정보 입력</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                회사 정보 입력 폼이 여기에 표시됩니다.
-              </p>
+            {/* 단순 등록 양식 - AI 서비스 대상 아님 */}
+            {!formTypeLoading && formType === 'simple_registration' && (
+              <div className="space-y-4">
+                <div className="p-6 bg-gray-50 rounded-lg border border-gray-200">
+                  <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                    📋 이 공고는 단순 등록 양식입니다
+                  </h3>
 
-              {/* 임시 버튼 (실제로는 폼 제출 후) */}
-              <Button
-                onClick={() => {
-                  // 임시 테스트 데이터
-                  const testCompanyData = {
-                    회사정보: {
-                      상호: '테스트 회사',
-                      사업자번호: '123-45-67890',
-                      설립일: '2020-01-01',
-                      직원수: 10,
-                      업종: '제조업'
-                    },
-                    사업내용: {
-                      주력제품: 'AI 솔루션',
-                      기술분야: ['인공지능', '자동화']
-                    },
-                    사업계획: {
-                      자금계획: {
-                        총사업비: 100000000,
-                        자부담: 30000000,
-                        정부지원_희망액: 70000000,
-                        용도: {
-                          연구개발: 50000000,
-                          마케팅: 30000000,
-                          인력채용: 20000000
-                        }
-                      }
-                    }
-                  }
-                  analyzeCompany(testCompanyData)
-                }}
-                disabled={loading}
-                className="w-full"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    회사 분석 중...
-                  </>
-                ) : (
-                  '회사 정보 제출 및 분석'
+                  <p className="text-gray-700 mb-4">
+                    이 공고는 <strong>수강 신청서/참가 신청서</strong> 형태로,<br />
+                    이름·연락처·소속 등 기본 정보만 입력하면 됩니다.
+                  </p>
+
+                  <div className="bg-white p-4 rounded-lg border mb-4">
+                    <h4 className="font-medium text-gray-800 mb-2">AI가 도와줄 수 있는 것</h4>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li className="flex items-center gap-2">
+                        <span className="text-red-500">✕</span> 평가 심사 없음 → 전략적 작성 불필요
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="text-red-500">✕</span> 사업계획서 작성 불필요
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <span className="text-red-500">✕</span> 복잡한 서류 준비 불필요
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <p className="text-blue-800 font-medium">
+                      💡 직접 신청하시는 것을 권장드립니다
+                    </p>
+                    <p className="text-sm text-blue-600 mt-1">
+                      공고 페이지에서 바로 신청서를 작성하시면 됩니다.
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  size="lg"
+                  onClick={() => window.history.back()}
+                >
+                  ← 공고 상세로 돌아가기
+                </Button>
+              </div>
+            )}
+
+            {/* 평가 기반 / 사업계획서 양식 - AI 서비스 제공 */}
+            {!formTypeLoading && formType && formType !== 'simple_registration' && (
+              <>
+                {/* 양식 유형 안내 배너 */}
+                <div className={`p-4 rounded-lg border ${
+                  formType === 'business_plan'
+                    ? 'bg-purple-50 border-purple-200'
+                    : 'bg-blue-50 border-blue-200'
+                }`}>
+                  <h3 className="font-semibold mb-1">
+                    {TIER_RECOMMENDATIONS[formType]?.message}
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    {TIER_RECOMMENDATIONS[formType]?.description}
+                  </p>
+                  <p className="text-xs text-blue-600 mt-2">
+                    AI 지원 가치: 높음 - 전략적 작성 도움 가능
+                  </p>
+                </div>
+
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <h3 className="font-semibold mb-2">💳 크레딧 잔액</h3>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {creditBalance.toLocaleString()}원
+                  </p>
+                </div>
+
+                <div className="grid md:grid-cols-3 gap-4">
+                  {/* Basic 티어 */}
+                  <Card
+                    className={`cursor-pointer transition-all ${
+                      selectedTier === 'basic' ? 'ring-2 ring-blue-500' : ''
+                    }`}
+                    onClick={() => setSelectedTier('basic')}
+                  >
+                    <CardHeader>
+                      <CardTitle>베이직</CardTitle>
+                      <CardDescription>₩4,900</CardDescription>
+                    </CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      <p>• 📖 스토리형 신청서 1개</p>
+                      <p>• 수정권 1회</p>
+                      <p>• 품질 검사</p>
+                      <p className="text-xs text-gray-500 mt-2">감성적 스토리텔링 중심</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Standard 티어 */}
+                  <Card
+                    className={`cursor-pointer transition-all ${
+                      selectedTier === 'standard' ? 'ring-2 ring-blue-500' : ''
+                    } ${formType === 'evaluation_based' ? 'ring-2 ring-blue-400' : ''}`}
+                    onClick={() => setSelectedTier('standard')}
+                  >
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        스탠다드
+                        {formType === 'evaluation_based' && (
+                          <Badge className="bg-blue-500">추천</Badge>
+                        )}
+                        {!formType && <Badge variant="secondary">인기</Badge>}
+                      </CardTitle>
+                      <CardDescription>₩8,000</CardDescription>
+                    </CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      <p>• 3가지 스타일 신청서</p>
+                      <p>• 수정권 3회</p>
+                      <p>• AI가 최적 스타일 추천</p>
+                      <p className="text-xs text-gray-500 mt-2">📖스토리 📊데이터 🚀적극 중 선택</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Premium 티어 */}
+                  <Card
+                    className={`cursor-pointer transition-all ${
+                      selectedTier === 'premium' ? 'ring-2 ring-blue-500' : ''
+                    } ${formType === 'business_plan' ? 'ring-2 ring-purple-400' : ''}`}
+                    onClick={() => setSelectedTier('premium')}
+                  >
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        프리미엄
+                        {formType === 'business_plan' && (
+                          <Badge className="bg-purple-500">추천</Badge>
+                        )}
+                      </CardTitle>
+                      <CardDescription>₩15,000</CardDescription>
+                    </CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      <p>• 5가지 스타일 신청서</p>
+                      <p>• 수정권 7회</p>
+                      <p>• 베이스 3 + 조합 2 스타일</p>
+                      <p className="text-xs text-gray-500 mt-2">⚖️균형형 🎯전략형 등 조합 포함</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Button
+                  onClick={handleCreditPayment}
+                  disabled={loading || creditBalance < getTierPrice(selectedTier)}
+                  className="w-full"
+                  size="lg"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      처리 중...
+                    </>
+                  ) : (
+                    <>
+                      <CreditCard className="mr-2 h-4 w-4" />
+                      크레딧으로 결제 ({getTierPrice(selectedTier).toLocaleString()}원)
+                    </>
+                  )}
+                </Button>
+
+                {creditBalance < getTierPrice(selectedTier) && (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      크레딧이 부족합니다. 충전 후 이용해주세요.
+                    </AlertDescription>
+                  </Alert>
                 )}
-              </Button>
-            </div>
+              </>
+            )}
           </div>
         )}
 
-        {/* Step 3: 티어 선택 */}
-        {step === 'tier-select' && companyAnalysis && (
-          <div className="space-y-4">
-            <Alert>
-              <CheckCircle2 className="h-4 w-4" />
-              <AlertDescription>
-                회사 분석 완료! 강점 {companyAnalysis.company_analysis.강점분석.length}개,
-                약점 {companyAnalysis.company_analysis.약점분석.length}개 파악
+        {/* Step 2: 결제 처리 중 */}
+        {step === 'payment-processing' && (
+          <div className="text-center py-8">
+            <Loader2 className="h-12 w-12 animate-spin mx-auto text-blue-500 mb-4" />
+            <p className="text-lg font-semibold">결제 처리 중...</p>
+          </div>
+        )}
+
+        {/* Step 3: Writing Analysis 로딩 */}
+        {step === 'writing-analysis-loading' && (
+          <div className="text-center py-8">
+            <Loader2 className="h-12 w-12 animate-spin mx-auto text-blue-500 mb-4" />
+            <p className="text-lg font-semibold">공고 심화 분석 중...</p>
+            <p className="text-sm text-gray-600 mt-2">
+              Claude Sonnet 4.5가 공고를 깊이 분석하고 있습니다 (약 7분 소요)
+            </p>
+          </div>
+        )}
+
+        {/* Step 4: 과제 선택 (TaskSelectionChatbot) */}
+        {step === 'task-selection' && writingAnalysis && (
+          <TaskSelectionChatbot
+            announcementTitle={announcementTitle}
+            writingAnalysis={writingAnalysis}
+            onTaskSelected={handleTaskSelected}
+            onClose={() => setStep('tier-select')}
+          />
+        )}
+
+        {/* Step 5: 회사 정보 입력 */}
+        {step === 'company-info' && writingAnalysis && (
+          <ProfileCollectionChatbot
+            announcementId={announcementId}
+            announcementSource={announcementSource}
+            announcementTitle={announcementTitle}
+            announcementAnalysis={writingAnalysis}
+            selectedTaskNumber={selectedTask}
+            requiredInfoList={writingAnalysis.common_required_info || []}
+            onClose={() => setStep('task-selection')}
+            onComplete={handleCompanyInfoSubmit}
+          />
+        )}
+
+        {/* Step 6: 신청서 생성 중 */}
+        {step === 'generating' && (
+          <div className="text-center py-8">
+            <Loader2 className="h-12 w-12 animate-spin mx-auto text-blue-500 mb-4" />
+            <p className="text-lg font-semibold">신청서 생성 중...</p>
+            <p className="text-sm text-gray-600 mt-2">
+              AI가 최적화된 신청서를 작성하고 있습니다...
+            </p>
+          </div>
+        )}
+
+        {/* Step 7: 피드백 & 수정 - 스타일별 탭으로 표시 */}
+        {step === 'feedback' && applications.length > 0 && (
+          <div className="space-y-6">
+            {/* 스타일별 결과 탭 */}
+            <StyleResultsTabs
+              applications={applications}
+              tier={selectedTier}
+              onSelectStyle={handleStyleSelect}
+              selectedStyle={selectedStyle}
+            />
+
+            {/* 수정 요청 섹션 */}
+            {getCurrentApplication() && (
+              <ApplicationFeedbackChatbot
+                announcementId={announcementId}
+                announcementSource={announcementSource}
+                announcementTitle={announcementTitle}
+                applicationContent={convertToFeedbackContent(getCurrentApplication()!.content)}
+                tier={selectedTier}
+                remainingRevisions={getTierRevisions(selectedTier)}
+                onRevisionComplete={handleRevisionComplete}
+                onClose={() => setStep('generating')}
+                onFinalize={handleFinalize}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Step 8: 완료 */}
+        {step === 'completed' && (
+          <div className="space-y-6">
+            <Alert className="bg-green-50 border-green-200">
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <AlertDescription className="font-semibold text-green-800">
+                {applications.length > 1
+                  ? `${applications.length}가지 스타일의 신청서 작성이 완료되었습니다! 🎉`
+                  : '신청서 작성이 완료되었습니다! 🎉'
+                }
               </AlertDescription>
             </Alert>
 
-            <div className="grid md:grid-cols-3 gap-4">
-              {/* Basic 티어 */}
-              <Card
-                className={`cursor-pointer transition-all ${
-                  selectedTier === 'basic' ? 'ring-2 ring-blue-500' : ''
-                }`}
-                onClick={() => setSelectedTier('basic')}
-              >
-                <CardHeader>
-                  <CardTitle>베이직</CardTitle>
-                  <CardDescription>₩4,900</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm space-y-1">
-                  <p>• 신청서 1개</p>
-                  <p>• 수정권 1회</p>
-                  <p>• 품질 검사</p>
-                </CardContent>
-              </Card>
+            {/* 스타일별 결과 탭 */}
+            {applications.length > 0 && (
+              <StyleResultsTabs
+                applications={applications}
+                tier={selectedTier}
+                onSelectStyle={handleStyleSelect}
+                selectedStyle={selectedStyle}
+              />
+            )}
 
-              {/* Standard 티어 */}
-              <Card
-                className={`cursor-pointer transition-all ${
-                  selectedTier === 'standard' ? 'ring-2 ring-blue-500' : ''
-                }`}
-                onClick={() => setSelectedTier('standard')}
-              >
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    스탠다드
-                    <Badge variant="secondary">추천</Badge>
-                  </CardTitle>
-                  <CardDescription>₩14,900</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm space-y-1">
-                  <p>• 신청서 3개</p>
-                  <p>• 수정권 3회</p>
-                  <p>• AI 추천 자동</p>
-                  <p>• 공고 분석</p>
-                </CardContent>
-              </Card>
-
-              {/* Premium 티어 */}
-              <Card
-                className={`cursor-pointer transition-all ${
-                  selectedTier === 'premium' ? 'ring-2 ring-blue-500' : ''
-                }`}
-                onClick={() => setSelectedTier('premium')}
-              >
-                <CardHeader>
-                  <CardTitle>프리미엄</CardTitle>
-                  <CardDescription>₩29,900</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm space-y-1">
-                  <p>• 신청서 5개</p>
-                  <p>• 수정권 7회</p>
-                  <p>• AI 심층 추천</p>
-                  <p>• 맞춤 조합</p>
-                </CardContent>
-              </Card>
+            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <h4 className="font-semibold mb-2">다음 단계</h4>
+              <ul className="text-sm text-gray-700 space-y-1">
+                <li>• 각 스타일의 신청서를 비교해보세요</li>
+                <li>• 마음에 드는 스타일의 신청서를 다운로드하세요</li>
+                <li>• 공고 사이트에서 직접 신청서를 제출하세요</li>
+                <li>• 마이페이지에서 작성 내역을 확인할 수 있습니다</li>
+              </ul>
             </div>
 
             <Button
-              onClick={generateApplication}
-              disabled={loading}
+              onClick={() => window.location.href = '/mypage/applications'}
               className="w-full"
-              size="lg"
             >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  생성 시작 중...
-                </>
-              ) : (
-                `${selectedTier === 'basic' ? '베이직' : selectedTier === 'standard' ? '스탠다드' : '프리미엄'} 신청서 생성 시작`
-              )}
+              작성 내역 확인하기
             </Button>
-          </div>
-        )}
-
-        {/* Step 4: 생성 중 */}
-        {step === 'generating' && (
-          <div className="space-y-4">
-            <div className="text-center">
-              <Loader2 className="h-12 w-12 animate-spin mx-auto text-blue-500 mb-4" />
-              <h3 className="font-semibold text-lg mb-2">신청서 생성 중...</h3>
-              <p className="text-sm text-gray-600">
-                {currentStepText === 'analyzing' && 'AI가 공고와 회사 정보를 재분석 중입니다...'}
-                {currentStepText === 'generating' && 'GPT-4o가 신청서를 작성 중입니다...'}
-                {currentStepText === 'finalizing' && '최종 검토 및 품질 검사 중입니다...'}
-                {!currentStepText && '준비 중입니다...'}
-              </p>
-            </div>
-
-            <Progress value={progress} className="w-full" />
-            <p className="text-center text-sm text-gray-500">{progress}% 완료</p>
-          </div>
-        )}
-
-        {/* Step 5: 완료 */}
-        {step === 'completed' && (
-          <div className="space-y-4">
-            <Alert>
-              <CheckCircle2 className="h-4 w-4" />
-              <AlertDescription className="font-semibold">
-                신청서 생성 완료! 🎉
-              </AlertDescription>
-            </Alert>
-
-            <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-              <h3 className="font-semibold mb-2">생성된 신청서</h3>
-              <p className="text-sm">
-                {selectedTier === 'basic' && '1개의 신청서가 생성되었습니다.'}
-                {selectedTier === 'standard' && '3개의 신청서가 생성되었습니다.'}
-                {selectedTier === 'premium' && '5개의 신청서가 생성되었습니다.'}
-              </p>
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                onClick={() => downloadApplication('docx')}
-                className="flex-1"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                DOCX 다운로드
-              </Button>
-              <Button
-                onClick={() => downloadApplication('pdf')}
-                variant="outline"
-                className="flex-1"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                PDF 다운로드
-              </Button>
-            </div>
-
-            <p className="text-xs text-gray-500 text-center">
-              문서함에서 언제든지 다시 다운로드할 수 있습니다.
-            </p>
           </div>
         )}
       </CardContent>
