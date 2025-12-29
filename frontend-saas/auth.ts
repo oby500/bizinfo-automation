@@ -4,24 +4,24 @@ import Credentials from "next-auth/providers/credentials"
 import Kakao from "@/lib/auth/providers/kakao"
 import Naver from "@/lib/auth/providers/naver"
 import { db } from "@/lib/db/drizzle"
-import { users } from "@/lib/db/schema"
+import { users, credits } from "@/lib/db/schema"
 import { eq } from "drizzle-orm"
 import bcrypt from "bcryptjs"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
-    Google({
-      clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-    Kakao({
-      clientId: process.env.NEXT_PUBLIC_KAKAO_CLIENT_ID!,
-      clientSecret: "",
-    }),
-    Naver({
-      clientId: process.env.NEXT_PUBLIC_NAVER_CLIENT_ID!,
-      clientSecret: process.env.NAVER_CLIENT_SECRET!,
-    }),
+    // Google({
+    //   clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
+    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    // }),
+    // Kakao({
+    //   clientId: process.env.NEXT_PUBLIC_KAKAO_CLIENT_ID!,
+    //   clientSecret: "",
+    // }),
+    // Naver({
+    //   clientId: process.env.NEXT_PUBLIC_NAVER_CLIENT_ID!,
+    //   clientSecret: process.env.NAVER_CLIENT_SECRET!,
+    // }),
     Credentials({
       name: "credentials",
       credentials: {
@@ -77,12 +77,42 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           .where(eq(users.email, user.email))
           .limit(1)
 
+        let userId: number;
+
         if (!existingUser) {
           // 새 사용자 생성
-          await db.insert(users).values({
+          const [newUser] = await db.insert(users).values({
             email: user.email,
             name: user.name || '',
+          }).returning()
+
+          userId = newUser.id
+
+          // 새 사용자에게 credits 레코드 생성 (0원으로 시작)
+          await db.insert(credits).values({
+            userId: userId,
+            balance: 0,
+            totalCharged: 0,
+            totalUsed: 0,
           })
+        } else {
+          userId = existingUser.id
+
+          // 기존 사용자인데 credits 레코드가 없으면 생성
+          const [existingCredit] = await db
+            .select()
+            .from(credits)
+            .where(eq(credits.userId, userId))
+            .limit(1)
+
+          if (!existingCredit) {
+            await db.insert(credits).values({
+              userId: userId,
+              balance: 0,
+              totalCharged: 0,
+              totalUsed: 0,
+            })
+          }
         }
 
         return true
@@ -96,7 +126,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (session.user && token.email) {
         try {
           const [dbUser] = await db
-            .select()
+            .select({
+              id: users.id,
+              email: users.email,
+              name: users.name
+            })
             .from(users)
             .where(eq(users.email, token.email as string))
             .limit(1)
