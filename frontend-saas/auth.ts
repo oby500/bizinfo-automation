@@ -10,18 +10,18 @@ import bcrypt from "bcryptjs"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
-    // Google({
-    //   clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
-    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    // }),
-    // Kakao({
-    //   clientId: process.env.NEXT_PUBLIC_KAKAO_CLIENT_ID!,
-    //   clientSecret: "",
-    // }),
-    // Naver({
-    //   clientId: process.env.NEXT_PUBLIC_NAVER_CLIENT_ID!,
-    //   clientSecret: process.env.NAVER_CLIENT_SECRET!,
-    // }),
+    Google({
+      clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+    Kakao({
+      clientId: process.env.NEXT_PUBLIC_KAKAO_CLIENT_ID!,
+      clientSecret: "",
+    }),
+    Naver({
+      clientId: process.env.NEXT_PUBLIC_NAVER_CLIENT_ID!,
+      clientSecret: process.env.NAVER_CLIENT_SECRET!,
+    }),
     Credentials({
       name: "credentials",
       credentials: {
