@@ -1,0 +1,39 @@
+steps:
+  # Build
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/gov-support-staging/cloud-run-source-deploy/frontend-api-prod:$COMMIT_SHA'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/gov-support-staging/cloud-run-source-deploy/frontend-api-prod:latest'
+      - '.'
+    dir: 'frontend'
+  
+  # Push
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-northeast3-docker.pkg.dev/gov-support-staging/cloud-run-source-deploy/frontend-api-prod:$COMMIT_SHA'
+  
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-northeast3-docker.pkg.dev/gov-support-staging/cloud-run-source-deploy/frontend-api-prod:latest'
+  
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'frontend-api-prod'
+      - '--image'
+      - 'asia-northeast3-docker.pkg.dev/gov-support-staging/cloud-run-source-deploy/frontend-api-prod:$COMMIT_SHA'
+      - '--region'
+      - 'asia-northeast3'
+      - '--platform'
+      - 'managed'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
