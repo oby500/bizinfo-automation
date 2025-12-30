@@ -15,7 +15,15 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import timezone, datetime, timedelta
+
+# 한국 표준시 (KST, UTC+9)
+from datetime import timezone as _tz
+KST = _tz(timedelta(hours=9))
+
+def get_kst_now():
+    """현재 한국시간 반환"""
+    return datetime.now(KST)
 from pathlib import Path
 import os
 from dotenv import load_dotenv
@@ -64,14 +72,14 @@ if LOG_FORMAT == "json":
     handler.setFormatter(StructuredFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     logger = logging.getLogger(__name__)
-    logger.info("✅ 구조화된 로깅 (JSON) 활성화")
+    logger.info("[OK] 구조화된 로깅 (JSON) 활성화")
 else:
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     logger = logging.getLogger(__name__)
-    logger.info("✅ 일반 텍스트 로깅 활성화")
+    logger.info("[OK] 일반 텍스트 로깅 활성화")
 
 # Rate Limiting (로깅 이후에 초기화)
 try:
@@ -79,20 +87,20 @@ try:
     from slowapi.util import get_remote_address
     from slowapi.errors import RateLimitExceeded
     RATE_LIMIT_ENABLED = True
-    logger.info("✅ slowapi 설치됨 - Rate Limiting 활성화")
+    logger.info("[OK] slowapi 설치됨 - Rate Limiting 활성화")
 except ImportError:
     RATE_LIMIT_ENABLED = False
-    logger.warning("⚠️ slowapi 미설치 - Rate Limiting 비활성화 (pip install slowapi 필요)")
+    logger.warning("[WARN] slowapi 미설치 - Rate Limiting 비활성화 (pip install slowapi 필요)")
 
 # orjson import (한글 깨짐 방지)
 try:
     import orjson
     from fastapi.responses import ORJSONResponse
     default_response_class = ORJSONResponse
-    logger.info("✅ orjson 사용 (한글 인코딩 최적화)")
+    logger.info("[OK] orjson 사용 (한글 인코딩 최적화)")
 except ImportError:
     default_response_class = None
-    logger.warning("⚠️ orjson 미설치 - 기본 JSON 사용")
+    logger.warning("[WARN] orjson 미설치 - 기본 JSON 사용")
 
 # API 버전 관리 설정
 API_VERSION = "3.0.0"
@@ -116,10 +124,10 @@ if RATE_LIMIT_ENABLED:
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    logger.info("✅ Rate Limiting 활성화: 분당 60회 제한")
+    logger.info("[OK] Rate Limiting 활성화: 분당 60회 제한")
 else:
     limiter = None
-    logger.warning("⚠️ Rate Limiting 비활성화 상태")
+    logger.warning("[WARN] Rate Limiting 비활성화 상태")
 
 # CORS 설정 (환경변수 기반)
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
@@ -225,7 +233,7 @@ def get_endpoint_metrics_summary() -> Dict[str, Any]:
 
     return summary
 
-logger.info("✅ API 응답 시간 메트릭 추적 시스템 활성화")
+logger.info("[OK] API 응답 시간 메트릭 추적 시스템 활성화")
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """요청/응답 로깅 미들웨어 (요청 검증 + Correlation ID + 메트릭 추적)"""
@@ -473,7 +481,7 @@ class StandardErrorResponse:
                 "type": error_type,
                 "message": message,
                 "status_code": status_code,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": get_kst_now().isoformat()
             }
         }
         if details:
@@ -526,17 +534,41 @@ async def general_exception_handler(request: Request, exc: Exception):
 try:
     from routers import bookmark
     app.include_router(bookmark.router)
-    logger.info("✅ Bookmark 라우터 등록 완료")
+    logger.info("[OK] Bookmark 라우터 등록 완료")
 except Exception as e:
-    logger.warning(f"⚠️ Bookmark 라우터 등록 실패: {str(e)}")
+    logger.warning(f"[WARN] Bookmark 라우터 등록 실패: {str(e)}")
 
 # Application Writer 라우터 등록
 try:
     from routers import application_impl
     app.include_router(application_impl.router)
-    logger.info("✅ Application Writer 라우터 등록 완료")
+    logger.info("[OK] Application Writer 라우터 등록 완료")
 except Exception as e:
-    logger.warning(f"⚠️ Application Writer 라우터 등록 실패: {str(e)}")
+    logger.warning(f"[WARN] Application Writer 라우터 등록 실패: {str(e)}")
+
+# Writing Analysis 라우터 등록
+try:
+    from routers import writing_analysis
+    app.include_router(writing_analysis.router)
+    logger.info("[OK] Writing Analysis 라우터 등록 완료")
+except Exception as e:
+    logger.warning(f"[WARN] Writing Analysis 라우터 등록 실패: {str(e)}")
+
+# Jobs (Job Queue) 라우터 등록
+try:
+    from routers import jobs
+    app.include_router(jobs.router)
+    logger.info("[OK] Jobs (Job Queue) 라우터 등록 완료")
+except Exception as e:
+    logger.warning(f"[WARN] Jobs 라우터 등록 실패: {str(e)}")
+
+# Application Writer V2 라우터 등록
+try:
+    from routers import application_v2
+    app.include_router(application_v2.router)
+    logger.info("[OK] Application Writer V2 라우터 등록 완료")
+except Exception as e:
+    logger.warning(f"[WARN] Application Writer V2 라우터 등록 실패: {str(e)}")
 
 # ============================================================================
 
@@ -557,7 +589,7 @@ def connect_to_supabase_with_retry(max_retries=3):
     SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
     if not SUPABASE_URL or not SUPABASE_KEY:
-        logger.error("❌ Supabase 환경변수가 설정되지 않았습니다")
+        logger.error("[ERR] Supabase 환경변수가 설정되지 않았습니다")
         return None
 
     # 환경변수에서 커넥션 풀 설정 가져오기
@@ -590,18 +622,18 @@ def connect_to_supabase_with_retry(max_retries=3):
             # 연결 테스트 (간단한 쿼리 실행)
             test_result = client.table('kstartup_complete').select("announcement_id").limit(1).execute()
 
-            logger.info(f"✅ Supabase 연결 성공 (시도: {attempt}/{max_retries}, 커넥션 풀: {MAX_CONNECTIONS}, 타임아웃: {REQUEST_TIMEOUT}초)")
+            logger.info(f"[OK] Supabase 연결 성공 (시도: {attempt}/{max_retries}, 커넥션 풀: {MAX_CONNECTIONS}, 타임아웃: {REQUEST_TIMEOUT}초)")
             return client
 
         except Exception as e:
             wait_time = 2 ** attempt  # 지수 백오프: 2초, 4초, 8초
-            logger.warning(f"⚠️ Supabase 연결 시도 {attempt}/{max_retries} 실패: {e}")
+            logger.warning(f"[WARN] Supabase 연결 시도 {attempt}/{max_retries} 실패: {e}")
 
             if attempt < max_retries:
                 logger.info(f"⏳ {wait_time}초 후 재시도...")
                 time.sleep(wait_time)
             else:
-                logger.error(f"❌ Supabase 연결 최종 실패 (모든 재시도 소진)")
+                logger.error(f"[ERR] Supabase 연결 최종 실패 (모든 재시도 소진)")
                 return None
 
     return None
@@ -637,7 +669,7 @@ def track_db_query(table_name: str, execution_time: float, success: bool, error:
                 db_query_stats["errors"].append({
                     "table": table_name,
                     "error": str(error)[:200],  # 에러 메시지 200자 제한
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": get_kst_now().isoformat()
                 })
 
         db_query_stats["queries_by_table"][table_name] += 1
@@ -666,7 +698,7 @@ def get_db_connection_stats() -> Dict[str, Any]:
             "recent_errors": db_query_stats["errors"][-10:]  # 최근 10개 에러만 반환
         }
 
-logger.info("✅ 데이터베이스 커넥션 풀 모니터링 시스템 활성화")
+logger.info("[OK] 데이터베이스 커넥션 풀 모니터링 시스템 활성화")
 
 # Supabase 클라이언트 초기화 (커넥션 풀링 최적화 + 재시도 로직)
 supabase = connect_to_supabase_with_retry(max_retries=3)
@@ -681,9 +713,9 @@ try:
         raise ValueError("OpenAI API Key가 설정되지 않았습니다")
 
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    logger.info("✅ OpenAI 클라이언트 초기화 성공")
+    logger.info("[OK] OpenAI 클라이언트 초기화 성공")
 except Exception as e:
-    logger.error(f"❌ OpenAI 클라이언트 초기화 실패: {e}")
+    logger.error(f"[ERR] OpenAI 클라이언트 초기화 실패: {e}")
     openai_client = None
 
 # ================================================
@@ -736,7 +768,7 @@ def create_background_task(task_type: str, description: str, params: Dict[str, A
             "error": None,
             "progress": 0,
             "total": 0,
-            "created_at": datetime.now().isoformat(),
+            "created_at": get_kst_now().isoformat(),
             "started_at": None,
             "completed_at": None
         }
@@ -749,7 +781,7 @@ def update_task_status(task_id: str, status: TaskStatus, progress: int = None, t
     """작업 상태 업데이트"""
     with background_tasks_lock:
         if task_id not in background_tasks_store:
-            logger.warning(f"⚠️ 존재하지 않는 작업 ID: {task_id}")
+            logger.warning(f"[WARN] 존재하지 않는 작업 ID: {task_id}")
             return
 
         task = background_tasks_store[task_id]
@@ -766,9 +798,9 @@ def update_task_status(task_id: str, status: TaskStatus, progress: int = None, t
 
         # 상태별 타임스탬프 업데이트
         if status == TaskStatus.RUNNING and not task["started_at"]:
-            task["started_at"] = datetime.now().isoformat()
+            task["started_at"] = get_kst_now().isoformat()
         elif status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-            task["completed_at"] = datetime.now().isoformat()
+            task["completed_at"] = get_kst_now().isoformat()
 
 def get_task_status(task_id: str) -> Optional[Dict[str, Any]]:
     """작업 상태 조회"""
@@ -802,13 +834,13 @@ async def execute_background_task(task_id: str, task_func, *args, **kwargs):
 
         # 작업 완료
         update_task_status(task_id, TaskStatus.COMPLETED, result=result)
-        logger.info(f"✅ 백그라운드 작업 완료: {task_id}")
+        logger.info(f"[OK] 백그라운드 작업 완료: {task_id}")
 
     except Exception as e:
         # 작업 실패
         error_msg = f"{type(e).__name__}: {str(e)}"
         update_task_status(task_id, TaskStatus.FAILED, error=error_msg)
-        logger.error(f"❌ 백그라운드 작업 실패: {task_id} - {error_msg}")
+        logger.error(f"[ERR] 백그라운드 작업 실패: {task_id} - {error_msg}")
         logger.error(traceback.format_exc())
 
 def log_slow_query(threshold: float = SLOW_QUERY_THRESHOLD, table_name: str = "unknown"):
@@ -859,7 +891,7 @@ def log_slow_query(threshold: float = SLOW_QUERY_THRESHOLD, table_name: str = "u
                 track_db_query(table_name, execution_time, success, error_msg)
 
                 logger.error(
-                    f"❌ 쿼리 실행 실패: {func.__name__} - {error_msg}",
+                    f"[ERR] 쿼리 실행 실패: {func.__name__} - {error_msg}",
                     extra={
                         "context": {
                             "function": func.__name__,
@@ -874,7 +906,7 @@ def log_slow_query(threshold: float = SLOW_QUERY_THRESHOLD, table_name: str = "u
         return wrapper
     return decorator
 
-logger.info(f"✅ 느린 쿼리 모니터링 활성화 (임계값: {SLOW_QUERY_THRESHOLD}초)")
+logger.info(f"[OK] 느린 쿼리 모니터링 활성화 (임계값: {SLOW_QUERY_THRESHOLD}초)")
 
 # ================================================
 # 인메모리 캐시 시스템 (간단한 Dict 기반)
@@ -890,7 +922,7 @@ cache_stats_tracker = {"hits": 0, "misses": 0, "expirations": 0}
 
 # 환경변수에서 TTL 설정 (기본 60초)
 CACHE_TTL = int(os.getenv("CACHE_TTL", "60"))
-logger.info(f"✅ 인메모리 캐시 활성화 (TTL: {CACHE_TTL}초)")
+logger.info(f"[OK] 인메모리 캐시 활성화 (TTL: {CACHE_TTL}초)")
 
 def get_cache(key: str) -> Optional[Any]:
     """캐시에서 데이터 조회 (히트율 추적)"""
@@ -905,11 +937,11 @@ def get_cache(key: str) -> Optional[Any]:
         # 만료된 캐시 삭제
         del cache_store[key]
         cache_stats_tracker["expirations"] += 1
-        logger.debug(f"🗑️ 캐시 만료 삭제: {key}")
+        logger.debug(f"[DEL] 캐시 만료 삭제: {key}")
         return None
 
     cache_stats_tracker["hits"] += 1
-    logger.debug(f"✅ 캐시 히트: {key}")
+    logger.debug(f"[OK] 캐시 히트: {key}")
     return data
 
 def set_cache(key: str, data: Any) -> None:
@@ -932,7 +964,7 @@ def clear_cache(pattern: Optional[str] = None) -> int:
         # 모든 캐시 삭제
         count = len(cache_store)
         cache_store.clear()
-        logger.info(f"🗑️ 모든 캐시 삭제됨 ({count}개)")
+        logger.info(f"[DEL] 모든 캐시 삭제됨 ({count}개)")
         return count
 
     # 패턴 매칭으로 삭제
@@ -942,7 +974,7 @@ def clear_cache(pattern: Optional[str] = None) -> int:
     for key in keys_to_delete:
         del cache_store[key]
 
-    logger.info(f"🗑️ 패턴 '{pattern}' 캐시 삭제됨 ({len(keys_to_delete)}개)")
+    logger.info(f"[DEL] 패턴 '{pattern}' 캐시 삭제됨 ({len(keys_to_delete)}개)")
     return len(keys_to_delete)
 
 def get_cache_stats() -> Dict[str, Any]:
@@ -1144,7 +1176,7 @@ async def health_check():
     """헬스체크 엔드포인트 - DB 연결, 캐시 상태, API 버전 포함"""
     health_status = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": get_kst_now().isoformat(),
         "version": API_VERSION,
         "version_info": {
             "major": API_VERSION_MAJOR,
@@ -1230,7 +1262,7 @@ async def get_performance_metrics():
 
     return {
         "success": True,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": get_kst_now().isoformat(),
         "summary": {
             "total_endpoints": len(endpoint_stats),
             "total_requests": sum(stats["count"] for stats in endpoint_stats.values())
@@ -1273,8 +1305,8 @@ async def get_statistics():
         }
 
     try:
-        logger.info("[Stats] 📊 DB 조회 시작...")
-        today = datetime.now().strftime("%Y-%m-%d")
+        logger.info("[Stats] DB 조회 시작...")
+        today = get_kst_now().strftime("%Y-%m-%d")
         week_later = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
         # K-Startup 통계 (count만 조회)
@@ -1319,7 +1351,7 @@ async def get_statistics():
             "today": (ks_today.count or 0) + (bi_today.count or 0),
             "ongoing": (ks_ongoing.count or 0) + (bi_ongoing.count or 0),
             "deadline": (ks_deadline.count or 0) + (bi_deadline.count or 0),
-            "last_update": datetime.now().isoformat(),
+            "last_update": get_kst_now().isoformat(),
             "cache_enabled": True,
             "cache_ttl": CACHE_TTL,
             "details": {
@@ -1340,12 +1372,12 @@ async def get_statistics():
 
         # 캐시 저장
         set_cache("api_stats", result)
-        logger.info("[Stats] ✅ 캐시 저장 완료")
+        logger.info("[Stats] [OK] 캐시 저장 완료")
 
         return result
 
     except Exception as e:
-        logger.error(f"❌ 통계 조회 실패: {e}")
+        logger.error(f"[ERR] 통계 조회 실패: {e}")
         logger.error(traceback.format_exc())
         return {
             "error": str(e),
@@ -1355,7 +1387,7 @@ async def get_statistics():
             "today": 0,
             "ongoing": 0,
             "deadline": 0,
-            "last_update": datetime.now().isoformat()
+            "last_update": get_kst_now().isoformat()
         }
 
 @app.get("/api/search")
@@ -1367,7 +1399,7 @@ async def search_announcements(
     status: Optional[str] = Query("all", description="상태: all, ongoing, deadline, closed"),
     sort: Optional[str] = Query("newest", description="정렬: newest, deadline, title"),
     page: int = Query(1, ge=1, description="페이지 번호"),
-    limit: int = Query(10, ge=1, le=100, description="페이지당 항목 수")
+    limit: int = Query(10, ge=1, le=1000, description="페이지당 항목 수 (최대 1000)")
 ):
     """공고 검색 (실제 DB 데이터) - DB 레벨 페이지네이션 적용 + Rate Limiting (60/min) + 캐싱"""
     if not supabase:
@@ -1381,7 +1413,7 @@ async def search_announcements(
         return cached_data
 
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = get_kst_now().strftime("%Y-%m-%d")
         week_later = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
         # 단일 소스 검색 (source가 all이 아닌 경우)
@@ -1443,7 +1475,7 @@ async def search_announcements(
 
         # 캐시 저장
         set_cache(cache_key, result)
-        logger.info(f"[Search] ✅ 캐시 저장: {cache_key}")
+        logger.info(f"[Search] [OK] 캐시 저장: {cache_key}")
 
         return result
 
@@ -1463,7 +1495,7 @@ async def _get_count(table_name: str, q: Optional[str], status: str, today: str,
             search_filter = f"biz_pbanc_nm.ilike.%{q}%,simple_summary.ilike.%{q}%"
         else:  # bizinfo_complete
             search_filter = f"pblanc_nm.ilike.%{q}%,organ_nm.ilike.%{q}%,sprt_trgt.ilike.%{q}%"
-        query = query.or_(search_filter)
+        query = getattr(query, 'or')(search_filter)
 
     # 상태 필터
     date_col = 'pbanc_rcpt_end_dt' if table_name == "kstartup_complete" else 'reqst_end_ymd'
@@ -1499,7 +1531,7 @@ async def _fetch_announcements(
             search_filter = f"biz_pbanc_nm.ilike.%{q}%,simple_summary.ilike.%{q}%"
         else:  # bizinfo_complete
             search_filter = f"pblanc_nm.ilike.%{q}%,organ_nm.ilike.%{q}%,sprt_trgt.ilike.%{q}%"
-        query = query.or_(search_filter)
+        query = getattr(query, 'or')(search_filter)
 
     # 상태 필터
     date_col = 'pbanc_rcpt_end_dt' if table_name == "kstartup_complete" else 'reqst_end_ymd'
@@ -1713,10 +1745,11 @@ async def get_announcement_detail(announcement_id: str):
     """공고 상세 조회 - 인메모리 캐시 적용"""
     # 캐시 키 생성
     cache_key = f"announcement_{announcement_id}"
-    cached_data = get_cache(cache_key)
-    if cached_data:
-        logger.info(f"[Announcement Detail] 💨 캐시 히트: {announcement_id}")
-        return cached_data
+    # 캐시 임시 비활성화 - tasks 생성 테스트용
+    # cached_data = get_cache(cache_key)
+    # if cached_data:
+    #     logger.info(f"[Announcement Detail] 💨 캐시 히트: {announcement_id}")
+    #     return cached_data
 
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected")
@@ -1733,7 +1766,7 @@ async def get_announcement_detail(announcement_id: str):
                 formatted_data = format_announcement(result.data[0], "kstartup")
                 # 캐시 저장
                 set_cache(cache_key, formatted_data)
-                logger.info(f"[Announcement Detail] ✅ 캐시 저장: {announcement_id}")
+                logger.info(f"[Announcement Detail] [OK] 캐시 저장: {announcement_id}")
                 return formatted_data
 
         elif announcement_id.startswith("PBLN_"):
@@ -1746,7 +1779,7 @@ async def get_announcement_detail(announcement_id: str):
                 formatted_data = format_announcement(result.data[0], "bizinfo")
                 # 캐시 저장
                 set_cache(cache_key, formatted_data)
-                logger.info(f"[Announcement Detail] ✅ 캐시 저장: {announcement_id}")
+                logger.info(f"[Announcement Detail] [OK] 캐시 저장: {announcement_id}")
                 return formatted_data
 
         raise HTTPException(status_code=404, detail="공고를 찾을 수 없습니다")
@@ -1828,7 +1861,7 @@ async def get_filter_options():
         raise HTTPException(status_code=500, detail="Database not connected")
 
     try:
-        logger.info("[Filters] 📊 DB 조회 시작...")
+        logger.info("[Filters] DB 조회 시작...")
         filters = {
             "categories": [],
             "regions": [],
@@ -1928,7 +1961,7 @@ async def get_filter_options():
 
         # 캐시 저장 (인메모리 캐시 사용)
         set_cache("api_filters", result)
-        logger.info("[Filters] ✅ 캐시 저장 완료")
+        logger.info("[Filters] [OK] 캐시 저장 완료")
 
         return result
 
@@ -2000,7 +2033,7 @@ async def get_search_suggestions(
 
         # 캐시 저장 (인메모리 캐시 사용)
         set_cache(cache_key, result)
-        logger.info(f"[Suggestions] ✅ 캐시 저장: {q}")
+        logger.info(f"[Suggestions] [OK] 캐시 저장: {q}")
 
         return result
 
@@ -2100,7 +2133,7 @@ async def get_recent_announcements(
 
         # 캐시 저장 (status 별로 구분)
         set_cache("api_recent_all", recent_list)
-        logger.info(f"[Recent] ✅ 캐시 저장 완료 (전체 {len(recent_list)}개)")
+        logger.info(f"[Recent] [OK] 캐시 저장 완료 (전체 {len(recent_list)}개)")
 
         # 상태 필터링
         filtered = recent_list if not status else [x for x in recent_list if x.get('status') == status]
@@ -2206,6 +2239,119 @@ def extract_category_from_title(title):
 
     return None
 
+def generate_tasks_from_sections(writing_analysis):
+    """section_hierarchy_normalized로부터 tasks 배열 생성"""
+    if not writing_analysis:
+        return []
+
+    shn = writing_analysis.get('section_hierarchy_normalized', {})
+    sections = shn.get('sections', [])
+
+    if not sections:
+        return []
+
+    tasks = []
+
+    def process_section(section):
+        """섹션을 tasks 배열 항목으로 변환"""
+        # subsections 처리
+        for subsection in section.get('subsections', []):
+            task = {
+                "section_num": subsection.get('number_normalized', ''),
+                "title": subsection.get('title', ''),
+                "content_type": subsection.get('content_type', 'narrative'),
+                "guide": subsection.get('guide', {}),
+                "sub_items": subsection.get('sub_items', []),
+                "full_title": subsection.get('full_title', '')
+            }
+            tasks.append(task)
+
+    # 모든 섹션 처리
+    for section in sections:
+        # Level 1 container는 건너뛰고 subsections만 처리
+        if section.get('subsections'):
+            process_section(section)
+
+    return tasks
+
+
+def extract_common_required_info(announcement_data, source):
+    """공고 데이터로부터 공통 필수 정보 추출"""
+    common_info = []
+
+    if source == "kstartup":
+        # K-Startup 공통 필수 정보
+        if announcement_data.get("pbanc_ntrp_nm"):
+            common_info.append(f"주관기관: {announcement_data.get('pbanc_ntrp_nm')}")
+        if announcement_data.get("pbanc_rcpt_bgng_dt") and announcement_data.get("pbanc_rcpt_end_dt"):
+            common_info.append(f"신청기간: {announcement_data.get('pbanc_rcpt_bgng_dt')} ~ {announcement_data.get('pbanc_rcpt_end_dt')}")
+
+    else:  # bizinfo
+        # BizInfo 공통 필수 정보
+        if announcement_data.get("organ_nm"):
+            common_info.append(f"주관기관: {announcement_data.get('organ_nm')}")
+        if announcement_data.get("reqst_begin_ymd") and announcement_data.get("reqst_end_ymd"):
+            common_info.append(f"신청기간: {announcement_data.get('reqst_begin_ymd')} ~ {announcement_data.get('reqst_end_ymd')}")
+        if announcement_data.get("sprt_trgt"):
+            common_info.append(f"지원대상: {announcement_data.get('sprt_trgt')}")
+
+    return common_info
+
+
+def enhance_writing_analysis(writing_analysis, announcement_data, source):
+    """
+    writing_analysis에 tasks, common_required_info 등 추가
+
+    Args:
+        writing_analysis: DB에서 가져온 writing_analysis 객체
+        announcement_data: 공고 전체 데이터
+        source: 'kstartup' or 'bizinfo'
+
+    Returns:
+        개선된 writing_analysis 객체
+    """
+    logger.info(f"[enhance_writing_analysis] Called for {announcement_data.get('pblanc_id') or announcement_data.get('announcement_id')}")
+
+    if not writing_analysis:
+        writing_analysis = {}
+
+    writing_analysis['section_items'] = generate_tasks_from_sections(writing_analysis)
+
+    # common_required_info 생성
+    if 'common_required_info' not in writing_analysis or not writing_analysis['common_required_info']:
+        writing_analysis['common_required_info'] = extract_common_required_info(announcement_data, source)
+
+    tasks_val = writing_analysis.get('tasks')
+    if isinstance(tasks_val, dict) and isinstance(tasks_val.get('task_list'), list):
+        real_tasks_count = len(tasks_val.get('task_list', []))
+    elif isinstance(tasks_val, list):
+        real_tasks_count = len(tasks_val)
+    else:
+        real_tasks_count = 0
+
+    section_items_val = writing_analysis.get('section_items')
+    if real_tasks_count == 0 and isinstance(section_items_val, list) and len(section_items_val) > 0:
+        writing_analysis['task_input_mode'] = 'user_input'
+        writing_analysis['tasks'] = [
+            {
+                'task_number': 1,
+                'task_name': '(과제명 직접 입력)',
+                'user_input_required': True,
+                'description': '',
+                'required_info': [],
+                'evaluation_points': []
+            }
+        ]
+        real_tasks_count = 1
+    else:
+        writing_analysis['task_input_mode'] = 'select' if real_tasks_count > 1 else 'none'
+
+    writing_analysis['has_multiple_tasks'] = real_tasks_count > 1
+    writing_analysis['requires_task_selection'] = real_tasks_count > 1
+
+    return writing_analysis
+
+
 def format_announcement(data, source):
     """공고 데이터 포맷팅"""
     if source == "kstartup":
@@ -2234,7 +2380,9 @@ def format_announcement(data, source):
             "status": calculate_status(data.get("pbanc_rcpt_end_dt")),
             "days_left": calculate_days_left(data.get("pbanc_rcpt_end_dt")),
             "created_at": data.get("created_at"),
-            "updated_at": data.get("updated_at")
+            "updated_at": data.get("updated_at"),
+            "has_writable_content": data.get("has_writable_content"),
+            "writing_analysis": enhance_writing_analysis(data.get("writing_analysis"), data, source)
         }
     else:  # bizinfo
         title = data.get("pblanc_nm")
@@ -2267,7 +2415,9 @@ def format_announcement(data, source):
                 "target": data.get("sprt_trgt"),
                 "scale": data.get("sport_scale_cn"),
                 "contact": data.get("rqut_mn_cn")
-            }
+            },
+            "has_writable_content": data.get("has_writable_content"),
+            "writing_analysis": enhance_writing_analysis(data.get("writing_analysis"), data, source)
         }
 
 # ================================================
@@ -2327,7 +2477,7 @@ async def admin_dashboard():
 
         return {
             "status": "success",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_kst_now().isoformat(),
             "stats": stats_data,
             "system": system_info,
             "recent_activity": {
@@ -2337,7 +2487,7 @@ async def admin_dashboard():
         }
 
     except Exception as e:
-        logger.error(f"❌ 관리자 대시보드 조회 실패: {e}")
+        logger.error(f"[ERR] 관리자 대시보드 조회 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/admin/cache/stats")
@@ -2348,10 +2498,10 @@ async def get_cache_stats_endpoint():
         return {
             "success": True,
             "stats": stats,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_kst_now().isoformat()
         }
     except Exception as e:
-        logger.error(f"❌ 캐시 통계 조회 실패: {e}")
+        logger.error(f"[ERR] 캐시 통계 조회 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/cache/clear")
@@ -2364,15 +2514,15 @@ async def clear_cache_endpoint(pattern: Optional[str] = Query(None, description=
     """
     try:
         deleted_count = clear_cache(pattern)
-        logger.info(f"🗑️ 관리자 요청으로 캐시 삭제됨 (패턴: {pattern or 'all'}, 개수: {deleted_count})")
+        logger.info(f"[DEL] 관리자 요청으로 캐시 삭제됨 (패턴: {pattern or 'all'}, 개수: {deleted_count})")
         return {
             "success": True,
             "message": f"캐시가 성공적으로 삭제되었습니다 (패턴: {pattern or 'all'})",
             "deleted_count": deleted_count,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_kst_now().isoformat()
         }
     except Exception as e:
-        logger.error(f"❌ 캐시 삭제 실패: {e}")
+        logger.error(f"[ERR] 캐시 삭제 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/cache/cleanup")
@@ -2385,10 +2535,10 @@ async def cleanup_cache_endpoint():
             "success": True,
             "message": f"만료된 캐시 항목이 정리되었습니다",
             "deleted_count": deleted_count,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_kst_now().isoformat()
         }
     except Exception as e:
-        logger.error(f"❌ 캐시 정리 실패: {e}")
+        logger.error(f"[ERR] 캐시 정리 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ================================================
@@ -2431,7 +2581,7 @@ async def get_tasks_list(
         }
 
     except Exception as e:
-        logger.error(f"❌ 작업 목록 조회 실패: {e}")
+        logger.error(f"[ERR] 작업 목록 조회 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/tasks/{task_id}")
@@ -2455,7 +2605,7 @@ async def get_task_status_endpoint(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 작업 상태 조회 실패: {e}")
+        logger.error(f"[ERR] 작업 상태 조회 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/tasks/{task_id}/cancel")
@@ -2490,7 +2640,7 @@ async def cancel_task_endpoint(task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 작업 취소 실패: {e}")
+        logger.error(f"[ERR] 작업 취소 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/tasks/stats/summary")
@@ -2520,11 +2670,11 @@ async def get_tasks_stats():
             "success": True,
             "stats": stats,
             "by_type": task_types,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": get_kst_now().isoformat()
         }
 
     except Exception as e:
-        logger.error(f"❌ 작업 통계 조회 실패: {e}")
+        logger.error(f"[ERR] 작업 통계 조회 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ================================================
@@ -2608,4 +2758,11 @@ if __name__ == "__main__":
     print("\n종료: Ctrl+C")
     print("="*60 + "\n")
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(
+        "app:app",  # import string for workers support
+        host="0.0.0.0",
+        port=8000,
+        reload=True,   # 개발 환경: 코드 변경 시 자동 재시작
+        workers=1,     # 개발 환경: 단일 워커로 bytecode 캐시 문제 방지 (실제 서비스: Docker + K8s)
+        log_level="info"
+    )
